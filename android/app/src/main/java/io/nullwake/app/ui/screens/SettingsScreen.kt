@@ -98,13 +98,13 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Tailscale Control & Proxy",
+                        text = "Tailscale Control & Proxy (Optional)",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Current state: ${uiState.tailscaleState}",
+                        text = "Current state: ${uiState.tailscaleState}. Both fields below are optional — leave them blank for normal browser login.",
                         style = MaterialTheme.typography.bodySmall,
                         color = NullWakeColors.CpuAccent,
                     )
@@ -113,14 +113,14 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = proxyInput,
                         onValueChange = { proxyInput = it },
-                        label = { Text("Local Control-Plane Proxy (optional)") },
+                        label = { Text("Local Proxy URL (Optional — leave blank if unused)") },
                         placeholder = { Text("socks5://127.0.0.1:10808") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Sets HTTP_PROXY / HTTPS_PROXY for Tailscale control-plane & DERP TCP handshakes while WireGuard UDP P2P remains direct.",
+                        text = "Only needed if you run a local proxy app (e.g. Clash/v2ray/NekoBox) on this phone. Routes control-plane & DERP TCP handshakes while WireGuard UDP P2P stays direct.",
                         style = MaterialTheme.typography.labelSmall,
                         color = NullWakeColors.TextSecondary,
                     )
@@ -129,7 +129,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = authKeyInput,
                         onValueChange = { authKeyInput = it },
-                        label = { Text("Tailscale Auth Key (optional)") },
+                        label = { Text("Pre-Auth Key (Optional — leave blank for browser login)") },
                         placeholder = { Text("tskey-auth-...") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
