@@ -43,18 +43,28 @@ fun SparklineCanvas(
         val padBottom = 6.dp.toPx()
         val usableHeight = (canvasHeight - padTop - padBottom).coerceAtLeast(1f)
 
-        // Subtle baseline reference lines (0%, 50%, 100%).
-        val dashEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f), 0f)
-        for (ratio in listOf(0f, 0.5f, 1f)) {
-            val y = padTop + usableHeight * ratio
-            drawLine(
-                color = NullWakeColors.Border.copy(alpha = 0.55f),
-                start = Offset(0f, y),
-                end = Offset(width, y),
-                strokeWidth = 1.dp.toPx(),
-                pathEffect = dashEffect,
-            )
-        }
+        // Subtle horizontal reference lines at 100% (top), 50% (mid), and baseline.
+        val dashEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 7f), 0f)
+        drawLine(
+            color = NullWakeColors.Border.copy(alpha = 0.55f),
+            start = Offset(0f, padTop),
+            end = Offset(width, padTop),
+            strokeWidth = 1.dp.toPx(),
+            pathEffect = dashEffect,
+        )
+        drawLine(
+            color = NullWakeColors.Border.copy(alpha = 0.55f),
+            start = Offset(0f, padTop + usableHeight * 0.5f),
+            end = Offset(width, padTop + usableHeight * 0.5f),
+            strokeWidth = 1.dp.toPx(),
+            pathEffect = dashEffect,
+        )
+        drawLine(
+            color = NullWakeColors.Border.copy(alpha = 0.4f),
+            start = Offset(0f, padTop + usableHeight),
+            end = Offset(width, padTop + usableHeight),
+            strokeWidth = 1.dp.toPx(),
+        )
 
         val combinedMax = maxValue ?: run {
             val m1 = points.maxOrNull() ?: 1f
@@ -99,10 +109,9 @@ fun SparklineCanvas(
                 drawPath(
                     path = fillPath,
                     brush = Brush.verticalGradient(
-                        colors = listOf(
-                            color.copy(alpha = 0.30f),
-                            color.copy(alpha = 0.02f),
-                        ),
+                        0.0f to color.copy(alpha = 0.34f),
+                        0.6f to color.copy(alpha = 0.10f),
+                        1.0f to color.copy(alpha = 0.0f),
                         startY = padTop,
                         endY = padTop + usableHeight,
                     ),

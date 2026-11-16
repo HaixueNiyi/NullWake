@@ -121,7 +121,7 @@ fun DashboardScreen(
                     title = "Network",
                     icon = Icons.Rounded.NetworkCheck,
                     headline = "↓ ${formatBytesPerSec(data.net.rxBytesSec)}   ↑ ${formatBytesPerSec(data.net.txBytesSec)}",
-                    subtitle = "Green: RX  •  Amber: TX  (60-sample window)",
+                    subtitle = "Violet: RX  •  Light Violet: TX  (60-sample window)",
                     accent = NullWakeColors.NetRxAccent,
                     points = uiState.netRxHistory,
                     secondaryPoints = uiState.netTxHistory,
@@ -265,7 +265,9 @@ private fun MetricSparklineCard(
                 }
                 Text(
                     text = headline,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontFeatureSettings = "tnum",
+                    ),
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                     color = NullWakeColors.TextPrimary,
@@ -274,7 +276,9 @@ private fun MetricSparklineCard(
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = subtitle,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontFeatureSettings = "tnum",
+                ),
                 color = NullWakeColors.TextSecondary,
             )
             Spacer(modifier = Modifier.height(10.dp))
@@ -294,11 +298,7 @@ private fun GpuSparklineCard(
     gpu: GpuMetrics,
     points: List<Float>,
 ) {
-    val accent = if (gpu.vendor.equals("amd", ignoreCase = true)) {
-        NullWakeColors.GpuAmdAccent
-    } else {
-        NullWakeColors.GpuIntelAccent
-    }
+    val accent = NullWakeColors.GpuAccent
 
     Card(
         colors = CardDefaults.cardColors(containerColor = NullWakeColors.Surface),
@@ -337,7 +337,9 @@ private fun GpuSparklineCard(
                 }
                 Text(
                     text = String.format(Locale.US, "%.1f%%", gpu.usagePercent),
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontFeatureSettings = "tnum",
+                    ),
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                     color = NullWakeColors.TextPrimary,
@@ -351,7 +353,9 @@ private fun GpuSparklineCard(
             }
             Text(
                 text = "${vramPart}${String.format(Locale.US, "%.1f°C", gpu.tempC)}",
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontFeatureSettings = "tnum",
+                ),
                 color = NullWakeColors.TextSecondary,
             )
             Spacer(modifier = Modifier.height(10.dp))

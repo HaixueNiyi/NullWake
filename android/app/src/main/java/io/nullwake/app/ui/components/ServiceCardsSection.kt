@@ -138,7 +138,9 @@ private fun ServiceCard(
                         ) {
                             Text(
                                 text = "$k: $v",
-                                style = MaterialTheme.typography.labelSmall,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontFeatureSettings = "tnum",
+                                ),
                                 color = NullWakeColors.TextPrimary,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             )
@@ -251,7 +253,9 @@ private fun ServiceDetailBottomSheet(
                         Text(
                             text = v,
                             color = NullWakeColors.TextPrimary,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFeatureSettings = "tnum",
+                            ),
                             fontFamily = FontFamily.Monospace,
                         )
                     }
@@ -292,7 +296,9 @@ private fun ServiceDetailBottomSheet(
                         ) {
                             Text(
                                 text = formatEpochSeconds(item.ts),
-                                style = MaterialTheme.typography.labelSmall,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontFeatureSettings = "tnum",
+                                ),
                                 fontFamily = FontFamily.Monospace,
                                 color = NullWakeColors.CpuAccent,
                             )

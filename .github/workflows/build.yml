@@ -1,0 +1,104 @@
+name: NullWake CI
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux-agent:
+    name: Build & Test Linux Agent
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: |
+            agent/go.sum
+            tsnet-bridge/go.sum
+
+      - name: Vet and test Linux agent
+        working-directory: agent
+        run: |
+          CGO_ENABLED=0 go vet ./...
+          CGO_ENABLED=0 go test -v ./...
+
+      - name: Vet and test tsnet-bridge
+        working-directory: tsnet-bridge
+        run: |
+          CGO_ENABLED=0 go vet ./...
+          CGO_ENABLED=0 go test -v ./...
+
+      - name: Build static Linux binaries (amd64 & arm64)
+        working-directory: agent
+        run: |
+          mkdir -p ../dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../dist/nullwake-agent-linux-amd64 ./cmd/agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o ../dist/nullwake-agent-linux-arm64 ./cmd/agent
+          ls -lh ../dist
+
+      - name: Upload Linux agent binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: nullwake-agent-linux
+          path: dist/nullwake-agent-linux-*
+
+  android-apk:
+    name: Build Android Bridge & APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: tsnet-bridge/go.mod
+          cache-dependency-path: tsnet-bridge/go.sum
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK and Build Tools
+        run: |
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Install gomobile and build tsnet-bridge.aar
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          export PATH="$(go env GOPATH)/bin:${PATH}"
+          gomobile init
+          (cd tsnet-bridge && go get golang.org/x/mobile/bind@latest)
+          ./tsnet-bridge/build_aar.sh
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Build Debug & Release APKs
+        working-directory: android
+        run: gradle assembleDebug assembleRelease --no-daemon
+
+      - name: Upload Android AAR & APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: nullwake-android
+          path: |
+            android/app/libs/tsnet-bridge.aar
+            android/app/build/outputs/apk/**/*.apk

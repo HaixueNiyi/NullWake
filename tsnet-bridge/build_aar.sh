@@ -14,9 +14,11 @@ if ! command -v gomobile >/dev/null 2>&1; then
   exit 1
 fi
 
+TARGET="${GOMOBILE_TARGET:-android/arm64}"
+
 cd "${SCRIPT_DIR}"
 gomobile bind \
-  -target=android \
+  -target="${TARGET}" \
   -androidapi 26 \
   -ldflags="-s -w" \
   -o "${OUT_AAR}" \
