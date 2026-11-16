@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# NullWake Agent Installer — https://github.com/HaixueNiyi/NullWake
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,7 +34,7 @@ case "${DISTRO}" in
       echo "Go toolchain not found. Install Go or build agent binary first." >&2
     fi
     ;;
-  arch|endeavouros|manjaro)
+  arch|cachyos|endeavouros|manjaro)
     echo "Arch-based distro detected."
     if ! command -v go >/dev/null 2>&1; then
       echo "Hint: install Go with 'pacman -S go' if building from source." >&2

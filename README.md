@@ -1,4 +1,6 @@
-# NullWake (v1.1)
+# NullWake (v1.2)
+
+[![NullWake CI](https://github.com/HaixueNiyi/NullWake/actions/workflows/build.yml/badge.svg)](https://github.com/HaixueNiyi/NullWake/actions/workflows/build.yml)
 
 **NullWake** is an ultra-lightweight, open-source, **strictly on-demand** system and service monitoring suite for Linux hosts and Android devices.
 
@@ -115,11 +117,15 @@ nullwake/
 
 ## Quickstart: Linux Agent (Ubuntu / Debian / Arch)
 
-### 1. Build & Install via Script
+### 1. Clone, Build & Install via Script
 ```bash
+git clone https://github.com/HaixueNiyi/NullWake.git
+cd NullWake
 sudo ./deploy/install.sh
 ```
 This builds a static single binary (`CGO_ENABLED=0`), creates the `nullwake` system user, installs `/etc/nullwake/config.toml` from `agent/config.example.toml`, and installs `deploy/nullwake-agent.service` with `AmbientCapabilities=CAP_PERFMON` for unprivileged Intel iGPU PMU telemetry (`i915/rcs0-busy`).
+
+> Prebuilt static Linux binaries (`nullwake-agent-linux-amd64` / `arm64`) and Android APKs (`nullwake-android`) are also compiled automatically on every push via [GitHub Actions](https://github.com/HaixueNiyi/NullWake/actions).
 
 ### 2. First-Run Tailscale Login
 Either set `auth_key` in `/etc/nullwake/config.toml` (or `TS_AUTHKEY`) before starting, or start the service and follow logs for the interactive login URL:
