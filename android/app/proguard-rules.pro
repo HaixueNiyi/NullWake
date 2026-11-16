@@ -1,0 +1,4 @@
+-keep class tsnetbridge.** { *; }
+-keep class go.** { *; }
+-dontwarn go.**
+-dontwarn tsnetbridge.**
