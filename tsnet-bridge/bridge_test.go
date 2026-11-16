@@ -100,6 +100,26 @@ func TestApplyProxyEnv(t *testing.T) {
 	}
 }
 
+func TestEnsureRuntimeDirsSetsAndroidFallbackEnv(t *testing.T) {
+	for _, k := range []string{"TS_LOGS_DIR", "TMPDIR", "HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"} {
+		t.Setenv(k, "")
+	}
+
+	stateDir := t.TempDir()
+	if err := ensureRuntimeDirs(stateDir); err != nil {
+		t.Fatalf("ensureRuntimeDirs failed: %v", err)
+	}
+	if got := os.Getenv("TS_LOGS_DIR"); got == "" {
+		t.Fatalf("expected TS_LOGS_DIR to be set")
+	}
+	if _, err := os.UserCacheDir(); err != nil {
+		t.Fatalf("expected os.UserCacheDir() to succeed, got: %v", err)
+	}
+	if _, err := os.UserConfigDir(); err != nil {
+		t.Fatalf("expected os.UserConfigDir() to succeed, got: %v", err)
+	}
+}
+
 type mockBridgeListener struct {
 	mu        sync.Mutex
 	telemetry []string

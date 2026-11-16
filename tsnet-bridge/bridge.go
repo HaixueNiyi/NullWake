@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -120,6 +121,9 @@ func (b *Bridge) Start(stateDir string, authKey string, proxyURL string, listene
 	}
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return fmt.Errorf("create state dir: %w", err)
+	}
+	if err := ensureRuntimeDirs(stateDir); err != nil {
+		return err
 	}
 
 	ts := &tsnet.Server{
@@ -480,6 +484,35 @@ func applyProxyEnv(proxyURL string) error {
 	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
 		if err := os.Setenv(k, proxyURL); err != nil {
 			return fmt.Errorf("set env %s: %w", k, err)
+		}
+	}
+	return nil
+}
+
+func ensureRuntimeDirs(stateDir string) error {
+	logsDir := filepath.Join(stateDir, "logs")
+	tmpDir := filepath.Join(stateDir, "tmp")
+	cacheDir := filepath.Join(stateDir, "cache")
+	configDir := filepath.Join(stateDir, "config")
+	for _, d := range []string{logsDir, tmpDir, cacheDir, configDir} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			return fmt.Errorf("create runtime dir %q: %w", d, err)
+		}
+	}
+
+	// Android app processes lack /var/lib/tailscale, /tmp, $HOME, and $XDG_CACHE_HOME.
+	// Point TS_LOGS_DIR and Go directory env vars into stateDir so logpolicy.LogsDir never panics.
+	if err := os.Setenv("TS_LOGS_DIR", logsDir); err != nil {
+		return fmt.Errorf("set TS_LOGS_DIR: %w", err)
+	}
+	for _, kv := range [][2]string{
+		{"TMPDIR", tmpDir},
+		{"HOME", stateDir},
+		{"XDG_CACHE_HOME", cacheDir},
+		{"XDG_CONFIG_HOME", configDir},
+	} {
+		if os.Getenv(kv[0]) == "" {
+			_ = os.Setenv(kv[0], kv[1])
 		}
 	}
 	return nil
