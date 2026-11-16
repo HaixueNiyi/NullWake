@@ -1,0 +1,38 @@
+# Tailscale / tsnet state and secrets
+**/tsnet-state/
+**/tailscaled.state
+tsnet-state/
+tailscaled.state
+*.state
+
+# Local configuration (keep config.example.toml tracked)
+config.toml
+!config.example.toml
+
+# Compiled binaries and artifacts
+*.aar
+nullwake-agent
+agent/nullwake-agent
+bin/
+dist/
+build/
+*.exe
+*.out
+*.sock
+
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+.cxx/
+captures/
+
+# IDE & OS files
+.idea/
+*.iml
+.vscode/
+.DS_Store
