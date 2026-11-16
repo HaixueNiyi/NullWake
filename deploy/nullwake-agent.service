@@ -1,0 +1,37 @@
+[Unit]
+Description=NullWake On-Demand System & Service Monitoring Agent
+Documentation=https://github.com/nullwake/nullwake
+After=network-online.target dbus.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nullwake
+Group=nullwake
+SupplementaryGroups=video render
+
+# Grant CAP_PERFMON so Intel iGPU PMU (i915/rcs0-busy) works without root.
+AmbientCapabilities=CAP_PERFMON
+CapabilityBoundingSet=CAP_PERFMON
+
+RuntimeDirectory=nullwake
+RuntimeDirectoryMode=0755
+StateDirectory=nullwake
+StateDirectoryMode=0700
+
+# Expose /run/nullwake.sock as a symlink to the unprivileged runtime socket.
+ExecStartPre=+/bin/ln -sfn /run/nullwake/nullwake.sock /run/nullwake.sock
+ExecStart=/usr/local/bin/nullwake-agent -config /etc/nullwake/config.toml
+ExecStopPost=+/bin/rm -f /run/nullwake.sock
+
+Restart=on-failure
+RestartSec=5s
+
+# Hardening while preserving /proc, /sys, and DBus read access.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/nullwake /run/nullwake
+
+[Install]
+WantedBy=multi-user.target
