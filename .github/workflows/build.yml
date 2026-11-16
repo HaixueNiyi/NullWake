@@ -68,13 +68,17 @@ jobs:
           go-version-file: tsnet-bridge/go.mod
           cache-dependency-path: tsnet-bridge/go.sum
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install Android NDK and Build Tools
         run: |
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+          SDKMANAGER="$(command -v sdkmanager || find "${ANDROID_HOME}/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n 1)"
+          if [ -z "${SDKMANAGER}" ] || [ ! -x "${SDKMANAGER}" ]; then
+            echo "sdkmanager not found under ANDROID_HOME=${ANDROID_HOME}" >&2
+            exit 1
+          fi
+          yes | "${SDKMANAGER}" --licenses > /dev/null || true
+          "${SDKMANAGER}" --install "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=${ANDROID_HOME}" >> "$GITHUB_ENV"
 
       - name: Install gomobile and build tsnet-bridge.aar
         run: |
