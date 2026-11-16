@@ -1,0 +1,44 @@
+# NullWake Agent Configuration Example
+# Copy to /etc/nullwake/config.toml (or local config.toml; gitignored).
+
+[tailscale]
+# Tailscale node name shown in the Android Device Switcher.
+hostname = "homelab-node"
+# Directory storing tsnet state (never commit this directory).
+state_dir = "/var/lib/nullwake/tsnet-state"
+# Optional ephemeral/reusable auth key; can also use TS_AUTHKEY env var.
+# Leave empty to print an interactive login URL on first run.
+auth_key = ""
+# TCP port exposed strictly over the Tailscale tsnet interface.
+listen_port = 9100
+
+[socket]
+# Unix Domain Socket path for push events (zero idle disk writes).
+path = "/run/nullwake.sock"
+# Default 0666 allows unprivileged game servers/scripts to push JSON lines.
+file_mode = "0666"
+# Bounded in-memory event ring buffer size per service.
+ring_buffer_size = 200
+
+# Example 1: Systemd unit queried via DBus only when a client is subscribed.
+[[services]]
+id = "docker"
+name = "Docker Engine"
+type = "systemd"
+unit = "docker.service"
+
+# Example 2: Custom script plugin run on-demand when subscribed.
+# Expected stdout JSON: {"status":"running","summary":"3/20 players","metrics":{"players":3,"tps":20.0}}
+# [[services]]
+# id = "mc"
+# name = "Minecraft Server"
+# type = "script"
+# command = ["/usr/local/bin/mc-status.sh"]
+# timeout_ms = 1500
+
+# Example 3: Push-only service receiving events on /run/nullwake.sock
+# echo '{"service_id":"backup","event":"Nightly snapshot finished (1.4 GB)"}' | nc -U -N /run/nullwake.sock
+[[services]]
+id = "backup"
+name = "Restic Backup"
+type = "push_only"
