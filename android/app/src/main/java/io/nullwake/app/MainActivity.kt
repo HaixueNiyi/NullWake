@@ -3,6 +3,7 @@ package io.nullwake.app
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -29,6 +30,15 @@ class MainActivity : ComponentActivity() {
     private val viewModel: NullWakeViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val crashFile = File(filesDir, "last_crash.txt")
+        val prevHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            runCatching {
+                crashFile.writeText("Thread ${thread.name}: ${throwable.stackTraceToString()}")
+            }
+            prevHandler?.uncaughtException(thread, throwable)
+        }
+
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 

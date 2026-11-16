@@ -56,6 +56,14 @@ class NullWakeViewModel(application: Application) : AndroidViewModel(application
     private var nodePollJob: Job? = null
 
     init {
+        val crashFile = File(application.filesDir, "last_crash.txt")
+        if (crashFile.exists()) {
+            val trace = runCatching { crashFile.readText() }.getOrNull()
+            crashFile.delete()
+            if (!trace.isNullOrBlank()) {
+                _uiState.update { it.copy(errorMessage = "Previous crash:\n${trace.take(1200)}") }
+            }
+        }
         startBridge()
     }
 

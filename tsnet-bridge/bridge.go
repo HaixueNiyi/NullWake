@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -98,7 +99,17 @@ func NewBridge() *Bridge {
 }
 
 // Start configures optional control-plane proxy env vars and boots userspace tsnet without Android VpnService.
-func (b *Bridge) Start(stateDir string, authKey string, proxyURL string, listener BridgeListener) error {
+func (b *Bridge) Start(stateDir string, authKey string, proxyURL string, listener BridgeListener) (retErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			msg := fmt.Sprintf("tsnet start panic: %v\n%s", r, string(debug.Stack()))
+			if listener != nil {
+				listener.OnError(msg)
+			}
+			retErr = errors.New(msg)
+		}
+	}()
+
 	b.Stop()
 
 	if err := applyProxyEnv(proxyURL); err != nil {
@@ -403,6 +414,11 @@ func (b *Bridge) runSubscription(
 
 func (b *Bridge) watchIPNBus(ctx context.Context, lc *local.Client, listener BridgeListener, done chan struct{}) {
 	defer close(done)
+	defer func() {
+		if r := recover(); r != nil && listener != nil {
+			listener.OnError(fmt.Sprintf("ipn bus panic: %v\n%s", r, string(debug.Stack())))
+		}
+	}()
 
 	var lastState string
 	var lastAuthURL string
