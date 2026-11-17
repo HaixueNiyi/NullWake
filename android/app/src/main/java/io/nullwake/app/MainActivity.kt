@@ -7,6 +7,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -113,29 +120,43 @@ class MainActivity : ComponentActivity() {
                             )
                         },
                     ) { innerPadding ->
-                        if (showSettings) {
-                            SettingsScreen(
-                                uiState = uiState,
-                                onSelectThemeMode = { viewModel.setThemeMode(it) },
-                                onToggleAmoled = { viewModel.setAmoledBlack(it) },
-                                onToggleDynamicColor = { viewModel.setDynamicColor(it) },
-                                onSelectLanguage = { viewModel.setAppLanguage(it) },
-                                onRenameNode = { id, newName -> viewModel.setCustomNodeName(id, newName) },
-                                onSelectInterval = { viewModel.setPollingInterval(it) },
-                                onApplyConnectionSettings = { proxy, key ->
-                                    viewModel.applyConnectionSettings(proxy, key)
-                                },
-                                onOpenAuthUrl = openAuthBrowser,
-                                onResetLogin = { viewModel.resetTailscaleLogin() },
-                                modifier = Modifier.padding(innerPadding),
-                            )
-                        } else {
-                            DashboardScreen(
-                                uiState = uiState,
-                                onOpenAuthUrl = openAuthBrowser,
-                                onOpenSettings = { showSettings = true },
-                                modifier = Modifier.padding(innerPadding),
-                            )
+                        AnimatedContent(
+                            targetState = showSettings,
+                            transitionSpec = {
+                                if (targetState) {
+                                    (fadeIn(tween(240)) + slideInHorizontally(tween(260)) { it / 12 }) togetherWith
+                                        (fadeOut(tween(180)) + slideOutHorizontally(tween(220)) { -it / 16 })
+                                } else {
+                                    (fadeIn(tween(240)) + slideInHorizontally(tween(260)) { -it / 12 }) togetherWith
+                                        (fadeOut(tween(180)) + slideOutHorizontally(tween(220)) { it / 16 })
+                                }
+                            },
+                            label = "screen_transition",
+                        ) { settingsVisible ->
+                            if (settingsVisible) {
+                                SettingsScreen(
+                                    uiState = uiState,
+                                    onSelectThemeMode = { viewModel.setThemeMode(it) },
+                                    onToggleAmoled = { viewModel.setAmoledBlack(it) },
+                                    onToggleDynamicColor = { viewModel.setDynamicColor(it) },
+                                    onSelectLanguage = { viewModel.setAppLanguage(it) },
+                                    onRenameNode = { id, newName -> viewModel.setCustomNodeName(id, newName) },
+                                    onSelectInterval = { viewModel.setPollingInterval(it) },
+                                    onApplyConnectionSettings = { proxy, key ->
+                                        viewModel.applyConnectionSettings(proxy, key)
+                                    },
+                                    onOpenAuthUrl = openAuthBrowser,
+                                    onResetLogin = { viewModel.resetTailscaleLogin() },
+                                    modifier = Modifier.padding(innerPadding),
+                                )
+                            } else {
+                                DashboardScreen(
+                                    uiState = uiState,
+                                    onOpenAuthUrl = openAuthBrowser,
+                                    onOpenSettings = { showSettings = true },
+                                    modifier = Modifier.padding(innerPadding),
+                                )
+                            }
                         }
                     }
                 }

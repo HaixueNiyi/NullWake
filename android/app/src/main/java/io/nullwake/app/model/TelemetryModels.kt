@@ -58,12 +58,17 @@ data class GpuMetrics(
     val tempC: Double,
 )
 
+data class ServiceMetric(
+    val label: String,
+    val value: String,
+)
+
 data class ServiceStatus(
     val id: String,
     val name: String,
     val status: String, // "running" | "stopped" | "degraded"
     val summary: String,
-    val metrics: Map<String, String>,
+    val metrics: List<ServiceMetric>,
     val history: List<HistoryEvent>,
 )
 
@@ -138,13 +143,27 @@ object TelemetryParser {
             val services = buildList(servicesArr.length()) {
                 for (i in 0 until servicesArr.length()) {
                     val s = servicesArr.optJSONObject(i) ?: continue
-                    val metricsMap = linkedMapOf<String, String>()
-                    val metricsObj = s.optJSONObject("metrics")
-                    if (metricsObj != null) {
-                        val keys = metricsObj.keys()
-                        while (keys.hasNext()) {
-                            val k = keys.next()
-                            metricsMap[k] = metricsObj.opt(k)?.toString() ?: ""
+                    val metricsList = buildList {
+                        val metricsArr = s.optJSONArray("metrics")
+                        if (metricsArr != null) {
+                            for (m in 0 until metricsArr.length()) {
+                                val metricObj = metricsArr.optJSONObject(m) ?: continue
+                                val label = metricObj.optString("label", "").trim()
+                                val value = metricObj.optString("value", "")
+                                if (label.isNotEmpty()) {
+                                    add(ServiceMetric(label = label, value = value))
+                                }
+                            }
+                        } else {
+                            // Legacy object fallback
+                            val metricsObj = s.optJSONObject("metrics")
+                            if (metricsObj != null) {
+                                val keys = metricsObj.keys()
+                                while (keys.hasNext()) {
+                                    val k = keys.next()
+                                    add(ServiceMetric(label = k, value = metricsObj.opt(k)?.toString() ?: ""))
+                                }
+                            }
                         }
                     }
 
@@ -167,7 +186,7 @@ object TelemetryParser {
                             name = s.optString("name", ""),
                             status = s.optString("status", "stopped"),
                             summary = s.optString("summary", ""),
-                            metrics = metricsMap,
+                            metrics = metricsList,
                             history = histList,
                         ),
                     )

@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os/exec"
+	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -12,12 +15,13 @@ import (
 	"github.com/nullwake/nullwake/agent/internal/protocol"
 )
 
-// Monitor evaluates configured services (systemd DBus, script plugins, push-only)
+// Monitor evaluates configured services (systemd DBus, tcp, http_json, script, push_only)
 // strictly on demand and merges buffered push events from the RingBuffer.
 type Monitor struct {
-	configs []config.ServiceConfig
-	rb      *RingBuffer
-	systemd SystemdQuerier
+	configs    []config.ServiceConfig
+	rb         *RingBuffer
+	systemd    SystemdQuerier
+	httpClient *http.Client
 
 	mu         sync.Mutex
 	lastStates map[string]string
@@ -32,9 +36,12 @@ func NewMonitor(configs []config.ServiceConfig, rb *RingBuffer, systemd SystemdQ
 		rb = NewRingBuffer(200)
 	}
 	return &Monitor{
-		configs:    configs,
-		rb:         rb,
-		systemd:    systemd,
+		configs: configs,
+		rb:      rb,
+		systemd: systemd,
+		httpClient: &http.Client{
+			Timeout: 5 * time.Second,
+		},
 		lastStates: make(map[string]string),
 	}
 }
@@ -50,6 +57,10 @@ func (m *Monitor) CollectServices(ctx context.Context) []protocol.ServiceStatus 
 		switch sc.Type {
 		case "systemd":
 			st = m.collectSystemd(ctx, sc)
+		case "tcp":
+			st = m.collectTCP(ctx, sc)
+		case "http_json":
+			st = m.collectHTTPJSON(ctx, sc)
 		case "script":
 			st = m.collectScript(ctx, sc)
 		default:
@@ -58,7 +69,7 @@ func (m *Monitor) CollectServices(ctx context.Context) []protocol.ServiceStatus 
 		m.recordTransition(sc.ID, st.Status)
 		st.History = m.rb.History(sc.ID)
 		if st.Metrics == nil {
-			st.Metrics = map[string]any{}
+			st.Metrics = []protocol.ServiceMetric{}
 		}
 		statuses = append(statuses, st)
 	}
@@ -76,10 +87,13 @@ func (m *Monitor) CollectServices(ctx context.Context) []protocol.ServiceStatus 
 	return statuses
 }
 
-// Reset closes any cached DBus connections when returning to idle.
+// Reset closes cached DBus and idle HTTP connections when returning to idle.
 func (m *Monitor) Reset() {
 	if m.systemd != nil {
 		_ = m.systemd.Close()
+	}
+	if m.httpClient != nil {
+		m.httpClient.CloseIdleConnections()
 	}
 }
 
@@ -94,7 +108,9 @@ func (m *Monitor) collectSystemd(ctx context.Context, sc config.ServiceConfig) p
 			Name:    sc.Name,
 			Status:  protocol.ServiceDegraded,
 			Summary: fmt.Sprintf("dbus error: %v", err),
-			Metrics: map[string]any{"unit": sc.Unit},
+			Metrics: []protocol.ServiceMetric{
+				{Label: "Unit", Value: sc.Unit},
+			},
 		}
 	}
 
@@ -102,23 +118,30 @@ func (m *Monitor) collectSystemd(ctx context.Context, sc config.ServiceConfig) p
 	if state.SubState != "" {
 		summary = fmt.Sprintf("%s (%s)", state.ActiveState, state.SubState)
 	}
+	metrics := []protocol.ServiceMetric{
+		{Label: "Unit", Value: sc.Unit},
+		{Label: "State", Value: summary},
+	}
+	if state.HasRSS {
+		metrics = append(metrics, protocol.ServiceMetric{
+			Label: "Memory",
+			Value: formatBytesHuman(state.RSSBytes),
+		})
+	}
+
 	return protocol.ServiceStatus{
 		ID:      sc.ID,
 		Name:    sc.Name,
 		Status:  state.Status,
 		Summary: summary,
-		Metrics: map[string]any{
-			"unit":         sc.Unit,
-			"active_state": state.ActiveState,
-			"sub_state":    state.SubState,
-		},
+		Metrics: metrics,
 	}
 }
 
 type scriptOutput struct {
-	Status  string         `json:"status"`
-	Summary string         `json:"summary"`
-	Metrics map[string]any `json:"metrics"`
+	Status  string          `json:"status"`
+	Summary string          `json:"summary"`
+	Metrics json.RawMessage `json:"metrics"`
 }
 
 func (m *Monitor) collectScript(ctx context.Context, sc config.ServiceConfig) protocol.ServiceStatus {
@@ -137,7 +160,7 @@ func (m *Monitor) collectScript(ctx context.Context, sc config.ServiceConfig) pr
 			Name:    sc.Name,
 			Status:  protocol.ServiceDegraded,
 			Summary: fmt.Sprintf("plugin error: %v", err),
-			Metrics: map[string]any{},
+			Metrics: []protocol.ServiceMetric{},
 		}
 	}
 
@@ -148,21 +171,48 @@ func (m *Monitor) collectScript(ctx context.Context, sc config.ServiceConfig) pr
 			Name:    sc.Name,
 			Status:  protocol.ServiceDegraded,
 			Summary: fmt.Sprintf("invalid plugin JSON: %v", err),
-			Metrics: map[string]any{},
+			Metrics: []protocol.ServiceMetric{},
 		}
 	}
 
-	status := normalizeStatus(parsed.Status)
-	if parsed.Metrics == nil {
-		parsed.Metrics = map[string]any{}
-	}
 	return protocol.ServiceStatus{
 		ID:      sc.ID,
 		Name:    sc.Name,
-		Status:  status,
+		Status:  normalizeStatus(parsed.Status),
 		Summary: parsed.Summary,
-		Metrics: parsed.Metrics,
+		Metrics: parseScriptMetrics(parsed.Metrics),
 	}
+}
+
+// parseScriptMetrics supports ordered [{"label":..,"value":..}] and legacy {"key": val} objects.
+func parseScriptMetrics(raw json.RawMessage) []protocol.ServiceMetric {
+	if len(raw) == 0 || string(raw) == "null" {
+		return []protocol.ServiceMetric{}
+	}
+
+	var ordered []protocol.ServiceMetric
+	if err := json.Unmarshal(raw, &ordered); err == nil {
+		return ordered
+	}
+
+	var legacy map[string]any
+	if err := json.Unmarshal(raw, &legacy); err == nil && len(legacy) > 0 {
+		keys := make([]string, 0, len(legacy))
+		for k := range legacy {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		out := make([]protocol.ServiceMetric, 0, len(keys))
+		for _, k := range keys {
+			out = append(out, protocol.ServiceMetric{
+				Label: k,
+				Value: formatJSONScalar(legacy[k]),
+			})
+		}
+		return out
+	}
+
+	return []protocol.ServiceMetric{}
 }
 
 func (m *Monitor) collectPushOnly(id, name string) protocol.ServiceStatus {
@@ -176,7 +226,9 @@ func (m *Monitor) collectPushOnly(id, name string) protocol.ServiceStatus {
 		Name:    name,
 		Status:  protocol.ServiceRunning,
 		Summary: summary,
-		Metrics: map[string]any{"buffered_events": len(hist)},
+		Metrics: []protocol.ServiceMetric{
+			{Label: "Buffered Events", Value: strconv.Itoa(len(hist))},
+		},
 		History: hist,
 	}
 }
@@ -202,4 +254,13 @@ func normalizeStatus(raw string) string {
 	default:
 		return protocol.ServiceDegraded
 	}
+}
+
+func formatBytesHuman(b uint64) string {
+	const mb = 1024 * 1024
+	const gb = 1024 * mb
+	if b >= gb {
+		return fmt.Sprintf("%.2f GB", float64(b)/float64(gb))
+	}
+	return fmt.Sprintf("%.1f MB", float64(b)/float64(mb))
 }

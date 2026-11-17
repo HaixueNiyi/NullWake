@@ -1,0 +1,80 @@
+# NullWake Service Templates (TOML)
+# Copy desired [[services]] blocks into your config.toml, or generate systemd/tcp
+# entries interactively via:
+#   nullwake-agent discover -config /etc/nullwake/config.toml
+
+[tailscale]
+hostname = "homelab-node"
+state_dir = "/var/lib/nullwake/tsnet-state"
+listen_port = 9100
+
+[socket]
+path = "/run/nullwake.sock"
+file_mode = "0666"
+ring_buffer_size = 200
+
+# 1. Systemd Service (status + process RSS memory via DBus /proc fallback)
+[[services]]
+id = "docker"
+name = "Docker Engine"
+type = "systemd"
+unit = "docker.service"
+
+# 2. Declarative TCP Port Probe (reports Listening + handshake latency on demand)
+[[services]]
+id = "postgres"
+name = "PostgreSQL"
+type = "tcp"
+addr = "127.0.0.1:5432"
+timeout_ms = 500
+
+# 3. Declarative HTTP JSON Probe (dot-path extraction + summary_template)
+[[services]]
+id = "ollama"
+name = "Ollama Local LLM"
+type = "http_json"
+url = "http://127.0.0.1:11434/api/version"
+timeout_ms = 1000
+summary_template = "Ollama v{version}"
+
+  [[services.fields]]
+  path = "version"
+  label = "Engine Version"
+
+# 4. Minecraft Server HTTP Status JSON (nested dot-paths preserve UI field order)
+[[services]]
+id = "minecraft"
+name = "Minecraft Survival"
+type = "http_json"
+url = "http://127.0.0.1:25580/status"
+timeout_ms = 800
+summary_template = "{players.online}/{players.max} players"
+
+  [[services.fields]]
+  path = "players.online"
+  label = "Players Online"
+
+  [[services.fields]]
+  path = "players.max"
+  label = "Max Players"
+
+  [[services.fields]]
+  path = "tps"
+  label = "Tick Rate (TPS)"
+
+# 5. Custom Script Plugin (only for custom logic not covered by systemd/tcp/http_json)
+# Stdout format:
+#   {"status":"running","summary":"Healthy","metrics":[{"label":"Queue","value":"2"},{"label":"Workers","value":"4"}]}
+[[services]]
+id = "custom-worker"
+name = "Media Transcoder"
+type = "script"
+command = ["/usr/local/bin/transcoder-status.sh"]
+timeout_ms = 1500
+
+# 6. Push-Only Service (receives JSON lines over /run/nullwake.sock into ring buffer)
+# printf '{"service_id":"restic-backup","event":"Snapshot 9f12a completed (2.1 GB)"}\n' | nc -U -N /run/nullwake.sock
+[[services]]
+id = "restic-backup"
+name = "Restic Backup"
+type = "push_only"

@@ -11,13 +11,19 @@ import (
 
 	"github.com/nullwake/nullwake/agent/internal/collector"
 	"github.com/nullwake/nullwake/agent/internal/config"
+	"github.com/nullwake/nullwake/agent/internal/discover"
 	"github.com/nullwake/nullwake/agent/internal/netstack"
 	"github.com/nullwake/nullwake/agent/internal/service"
 )
 
-var version = "1.0.1"
+var version = "1.1.0"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "discover" {
+		runDiscover(os.Args[2:])
+		return
+	}
+
 	var (
 		configPath  = flag.String("config", "", "Path to NullWake TOML config file")
 		stateDir    = flag.String("state-dir", "", "Override tsnet state directory")
@@ -78,4 +84,22 @@ func main() {
 		logger.Fatalf("server exited with error: %v", err)
 	}
 	logger.Printf("nullwake-agent shut down cleanly")
+}
+
+func runDiscover(args []string) {
+	fs := flag.NewFlagSet("discover", flag.ExitOnError)
+	configPath := fs.String("config", "/etc/nullwake/config.toml", "Target NullWake TOML config file to append discovered [[services]]")
+	if err := fs.Parse(args); err != nil {
+		os.Exit(2)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if err := discover.Run(ctx, discover.Options{
+		ConfigPath: *configPath,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "discover failed: %v\n", err)
+		os.Exit(1)
+	}
 }

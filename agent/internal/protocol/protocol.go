@@ -85,14 +85,20 @@ const (
 	ServiceDegraded = "degraded"
 )
 
+// ServiceMetric represents an ordered key-value metric rendered deterministically in the UI.
+type ServiceMetric struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
 // ServiceStatus describes a monitored service's current state, custom metrics, and recent events.
 type ServiceStatus struct {
-	ID      string         `json:"id"`
-	Name    string         `json:"name"`
-	Status  string         `json:"status"`
-	Summary string         `json:"summary"`
-	Metrics map[string]any `json:"metrics"`
-	History []HistoryEvent `json:"history"`
+	ID      string          `json:"id"`
+	Name    string          `json:"name"`
+	Status  string          `json:"status"`
+	Summary string          `json:"summary"`
+	Metrics []ServiceMetric `json:"metrics"`
+	History []HistoryEvent  `json:"history"`
 }
 
 // HistoryEvent represents a timestamped event stored in the in-memory ring buffer.
@@ -108,12 +114,24 @@ type PushEvent struct {
 	TS        int64  `json:"ts,omitempty"`
 }
 
-// MarshalJSON ensures Services is never serialized as null.
+// MarshalJSON ensures Services, Metrics, and History never serialize as null.
 func (d TelemetryData) MarshalJSON() ([]byte, error) {
 	type alias TelemetryData
 	copyData := alias(d)
 	if copyData.Services == nil {
 		copyData.Services = []ServiceStatus{}
+	} else {
+		services := make([]ServiceStatus, len(copyData.Services))
+		for i, svc := range copyData.Services {
+			if svc.Metrics == nil {
+				svc.Metrics = []ServiceMetric{}
+			}
+			if svc.History == nil {
+				svc.History = []HistoryEvent{}
+			}
+			services[i] = svc
+		}
+		copyData.Services = services
 	}
 	return json.Marshal(copyData)
 }

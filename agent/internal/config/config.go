@@ -31,14 +31,24 @@ type SocketConfig struct {
 	RingBufferSize int      `toml:"ring_buffer_size"`
 }
 
-// ServiceConfig defines a monitored service plugin or push-only service metadata.
+// FieldMapping extracts a JSON dot-path field and displays it under Label.
+type FieldMapping struct {
+	Path  string `toml:"path"`
+	Label string `toml:"label"`
+}
+
+// ServiceConfig defines a monitored service probe, script plugin, or push-only service.
 type ServiceConfig struct {
-	ID        string   `toml:"id"`
-	Name      string   `toml:"name"`
-	Type      string   `toml:"type"` // "systemd" | "script" | "push_only"
-	Unit      string   `toml:"unit"`
-	Command   []string `toml:"command"`
-	TimeoutMs int      `toml:"timeout_ms"`
+	ID              string         `toml:"id"`
+	Name            string         `toml:"name"`
+	Type            string         `toml:"type"` // "systemd" | "tcp" | "http_json" | "script" | "push_only"
+	Unit            string         `toml:"unit"`
+	Addr            string         `toml:"addr"`
+	URL             string         `toml:"url"`
+	Fields          []FieldMapping `toml:"fields"`
+	SummaryTemplate string         `toml:"summary_template"`
+	Command         []string       `toml:"command"`
+	TimeoutMs       int            `toml:"timeout_ms"`
 }
 
 // FileMode wraps os.FileMode to support both octal strings ("0666") and TOML integers (0o666).
@@ -124,12 +134,32 @@ func Load(path string) (Config, error) {
 			cfg.Services[i].Name = cfg.Services[i].ID
 		}
 		if cfg.Services[i].TimeoutMs <= 0 {
-			cfg.Services[i].TimeoutMs = 1500
+			if cfg.Services[i].Type == "tcp" {
+				cfg.Services[i].TimeoutMs = 500
+			} else {
+				cfg.Services[i].TimeoutMs = 1500
+			}
 		}
 		switch cfg.Services[i].Type {
 		case "systemd":
 			if cfg.Services[i].Unit == "" {
 				return Config{}, fmt.Errorf("services[%d] (%s): unit is required for systemd type", i, cfg.Services[i].ID)
+			}
+		case "tcp":
+			if cfg.Services[i].Addr == "" {
+				return Config{}, fmt.Errorf("services[%d] (%s): addr is required for tcp type", i, cfg.Services[i].ID)
+			}
+		case "http_json":
+			if cfg.Services[i].URL == "" {
+				return Config{}, fmt.Errorf("services[%d] (%s): url is required for http_json type", i, cfg.Services[i].ID)
+			}
+			for j := range cfg.Services[i].Fields {
+				if cfg.Services[i].Fields[j].Path == "" {
+					return Config{}, fmt.Errorf("services[%d] (%s): fields[%d].path is required", i, cfg.Services[i].ID, j)
+				}
+				if cfg.Services[i].Fields[j].Label == "" {
+					cfg.Services[i].Fields[j].Label = cfg.Services[i].Fields[j].Path
+				}
 			}
 		case "script":
 			if len(cfg.Services[i].Command) == 0 {

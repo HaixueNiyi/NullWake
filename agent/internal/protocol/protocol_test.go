@@ -92,7 +92,10 @@ func TestTelemetryMessageWithGPUAndServices(t *testing.T) {
 				Name:    "Minecraft Server",
 				Status:  ServiceRunning,
 				Summary: "3/20 players online",
-				Metrics: map[string]any{"players": 3, "tps": 20.0},
+				Metrics: []ServiceMetric{
+					{Label: "Online Players", Value: "3"},
+					{Label: "TPS", Value: "20.0"},
+				},
 				History: []HistoryEvent{{TS: 1730000000, Event: "PlayerAlice joined"}},
 			},
 		},
@@ -101,6 +104,13 @@ func TestTelemetryMessageWithGPUAndServices(t *testing.T) {
 	b, err := json.Marshal(msg)
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
+	}
+
+	raw := string(b)
+	playersIdx := strings.Index(raw, `"Online Players"`)
+	tpsIdx := strings.Index(raw, `"TPS"`)
+	if playersIdx < 0 || tpsIdx < 0 || playersIdx > tpsIdx {
+		t.Fatalf("expected deterministic metric order in JSON: %s", raw)
 	}
 
 	var decoded TelemetryMessage
@@ -115,6 +125,9 @@ func TestTelemetryMessageWithGPUAndServices(t *testing.T) {
 	}
 	if len(decoded.Data.Services) != 1 || decoded.Data.Services[0].ID != "mc" {
 		t.Fatalf("unexpected services: %+v", decoded.Data.Services)
+	}
+	if len(decoded.Data.Services[0].Metrics) != 2 || decoded.Data.Services[0].Metrics[0].Label != "Online Players" || decoded.Data.Services[0].Metrics[0].Value != "3" {
+		t.Fatalf("unexpected ordered metrics: %+v", decoded.Data.Services[0].Metrics)
 	}
 	if len(decoded.Data.Services[0].History) != 1 || decoded.Data.Services[0].History[0].Event != "PlayerAlice joined" {
 		t.Fatalf("unexpected history: %+v", decoded.Data.Services[0].History)

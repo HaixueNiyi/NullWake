@@ -28,6 +28,8 @@ local.properties
 *.aab
 *.keystore
 *.jks
+*.p12
+*.pem
 .cxx/
 captures/
 

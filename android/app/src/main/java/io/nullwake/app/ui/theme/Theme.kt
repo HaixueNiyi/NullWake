@@ -1,7 +1,10 @@
 package io.nullwake.app.ui.theme
 
 import android.os.Build
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
@@ -12,11 +15,11 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.shape.RoundedCornerShape
 
 enum class ThemeMode(val key: String) {
     SYSTEM("system"),
@@ -53,7 +56,7 @@ private val DarkPalette = NullWakePalette(
     onlineGreen = Color(0xFF22C55E),
     degradedAmber = Color(0xFFF59E0B),
     stoppedRed = Color(0xFFEF4444),
-    p2pBadge = Color(0xFF22D3EE),
+    p2pBadge = Color(0xFF38BDF8),
     derpBadge = Color(0xFFA78BFA),
     cardBorder = Color(0xFF2A3644),
 )
@@ -79,10 +82,10 @@ private val LightPalette = NullWakePalette(
 val LocalNullWakePalette = staticCompositionLocalOf { DarkPalette }
 
 private val NullWakeDarkScheme = darkColorScheme(
-    primary = Color(0xFF22D3EE),
-    onPrimary = Color(0xFF062028),
-    primaryContainer = Color(0xFF123846),
-    onPrimaryContainer = Color(0xFFCFFAFE),
+    primary = Color(0xFF38BDF8),
+    onPrimary = Color(0xFF082F49),
+    primaryContainer = Color(0xFF0C4A6E),
+    onPrimaryContainer = Color(0xFFE0F2FE),
     secondary = Color(0xFF34D399),
     onSecondary = Color(0xFF05291C),
     tertiary = Color(0xFFA78BFA),
@@ -100,10 +103,10 @@ private val NullWakeDarkScheme = darkColorScheme(
 )
 
 private val NullWakeLightScheme = lightColorScheme(
-    primary = Color(0xFF0891B2),
+    primary = Color(0xFF0284C7),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFCFFAFE),
-    onPrimaryContainer = Color(0xFF083344),
+    primaryContainer = Color(0xFFE0F2FE),
+    onPrimaryContainer = Color(0xFF082F49),
     secondary = Color(0xFF059669),
     onSecondary = Color.White,
     tertiary = Color(0xFF7C3AED),
@@ -163,12 +166,12 @@ fun NullWakeTheme(
         else -> NullWakeLightScheme
     }
 
-    val finalScheme = if (isDark && amoledBlack) baseScheme.withAmoledBlack() else baseScheme
+    val finalScheme = (if (isDark && amoledBlack) baseScheme.withAmoledBlack() else baseScheme).animated()
     val palette = when {
         !isDark -> LightPalette
         amoledBlack -> AmoledPalette
         else -> DarkPalette
-    }
+    }.animated()
 
     CompositionLocalProvider(LocalNullWakePalette provides palette) {
         MaterialTheme(
@@ -178,3 +181,53 @@ fun NullWakeTheme(
         )
     }
 }
+
+private val themeTween = tween<Color>(durationMillis = 320)
+
+@Composable
+private fun animColor(target: Color): Color {
+    val state by animateColorAsState(targetValue = target, animationSpec = themeTween, label = "theme_color")
+    return state
+}
+
+@Composable
+private fun ColorScheme.animated(): ColorScheme = copy(
+    primary = animColor(primary),
+    onPrimary = animColor(onPrimary),
+    primaryContainer = animColor(primaryContainer),
+    onPrimaryContainer = animColor(onPrimaryContainer),
+    secondary = animColor(secondary),
+    onSecondary = animColor(onSecondary),
+    secondaryContainer = animColor(secondaryContainer),
+    onSecondaryContainer = animColor(onSecondaryContainer),
+    tertiary = animColor(tertiary),
+    onTertiary = animColor(onTertiary),
+    background = animColor(background),
+    onBackground = animColor(onBackground),
+    surface = animColor(surface),
+    onSurface = animColor(onSurface),
+    surfaceVariant = animColor(surfaceVariant),
+    onSurfaceVariant = animColor(onSurfaceVariant),
+    surfaceContainerLowest = animColor(surfaceContainerLowest),
+    surfaceContainerLow = animColor(surfaceContainerLow),
+    surfaceContainer = animColor(surfaceContainer),
+    surfaceContainerHigh = animColor(surfaceContainerHigh),
+    surfaceContainerHighest = animColor(surfaceContainerHighest),
+    outline = animColor(outline),
+    outlineVariant = animColor(outlineVariant),
+)
+
+@Composable
+private fun NullWakePalette.animated(): NullWakePalette = copy(
+    cpuAccent = animColor(cpuAccent),
+    ramAccent = animColor(ramAccent),
+    gpuAccent = animColor(gpuAccent),
+    netRxAccent = animColor(netRxAccent),
+    netTxAccent = animColor(netTxAccent),
+    onlineGreen = animColor(onlineGreen),
+    degradedAmber = animColor(degradedAmber),
+    stoppedRed = animColor(stoppedRed),
+    p2pBadge = animColor(p2pBadge),
+    derpBadge = animColor(derpBadge),
+    cardBorder = animColor(cardBorder),
+)

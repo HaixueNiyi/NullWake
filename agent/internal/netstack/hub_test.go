@@ -47,7 +47,9 @@ func (f *fakeMonitor) CollectServices(_ context.Context) []protocol.ServiceStatu
 			Name:    "Minecraft",
 			Status:  protocol.ServiceRunning,
 			Summary: "2 players",
-			Metrics: map[string]any{"players": 2},
+			Metrics: []protocol.ServiceMetric{
+				{Label: "Players", Value: "2"},
+			},
 			History: []protocol.HistoryEvent{{TS: 1730000000, Event: "PlayerAlice joined"}},
 		},
 	}

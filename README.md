@@ -7,7 +7,7 @@
 - **Zero Public Exposure & Zero SSH:** No public TCP/UDP ports, no reverse proxies, no SSH keys, and no web dashboard exposed on the monitored host.
 - **Dual-End Embedded Tailscale (`tsnet`):** Both the Linux agent and Android viewer embed Tailscale's userspace networking stack (`tailscale.com/tsnet`). On Android, it never invokes `VpnService`, keeping 100% compatibility with your existing VPN or proxy apps.
 - **Strict Zero-Idle Polling:** When no Android viewer is actively viewing a host, the Linux agent performs **0% CPU telemetry polling** and **zero disk writes**. Hardware collectors spin up only on `SUBSCRIBE` and halt immediately upon `UNSUBSCRIBE`, backgrounding, or a 5-second `PING` watchdog timeout.
-- **Extensible Service Plugins & In-Memory Ring Buffer:** Monitor `systemd` units via DBus, execute custom JSON scripts on demand, or push discrete events to `/run/nullwake.sock` backed by a bounded in-memory ring buffer (`N = 200` events/service).
+- **Extensible Declarative Services & In-Memory Ring Buffer:** Monitor `systemd` units via DBus (including process memory), probe TCP ports (`tcp`) or JSON HTTP APIs (`http_json`) without writing shell scripts, run custom ordered-metric scripts, or push discrete events to `/run/nullwake.sock` backed by a bounded in-memory ring buffer (`N = 200` events/service). Also includes `nullwake-agent discover` for interactive TOML generation.
 
 ---
 
@@ -58,10 +58,12 @@ nullwake/
 │   ├── internal/
 │   │   ├── collector/      # CPU, RAM, Net, AMD/Intel/Headless GPU collectors
 │   │   ├── config/         # TOML configuration loader
+│   │   ├── discover/       # Interactive systemd & listening TCP port discovery CLI
 │   │   ├── netstack/       # Embedded tsnet server, WebSocket hub, 5s watchdog
 │   │   ├── protocol/       # Shared JSON message definitions
-│   │   └── service/        # DBus systemd checker, script runner, Unix socket ring buffer
+│   │   └── service/        # DBus systemd checker, tcp/http_json probes, script runner, ring buffer
 │   └── config.example.toml
+├── examples/               # Declarative [[services]] TOML templates (systemd, tcp, http_json, script)
 ├── tsnet-bridge/           # Minimal Go wrapper compiled via gomobile to .aar
 │   ├── bridge.go           # Start, GetOnlineNodes, SubscribeNode, Unsubscribe, Stop
 │   └── build_aar.sh        # gomobile bind with -ldflags="-s -w"
@@ -102,7 +104,10 @@ nullwake/
         "name": "Minecraft Server",
         "status": "running",
         "summary": "3/20 players online",
-        "metrics": { "players": 3, "tps": 20.0 },
+        "metrics": [
+          { "label": "Players", "value": "3/20" },
+          { "label": "TPS", "value": "20.0" }
+        ],
         "history": [
           { "ts": 1730000000, "event": "PlayerAlice joined" }
         ]
@@ -134,8 +139,13 @@ sudo systemctl start nullwake-agent
 journalctl -u nullwake-agent -f
 ```
 
-### 3. Pushing Events to the In-Memory Ring Buffer
-The agent listens on `/run/nullwake.sock` (default mode `0666`) without waking hardware collectors or writing to disk:
+### 3. Discover Services & Pushing Events to the In-Memory Ring Buffer
+Scan active `systemd` units and listening local TCP ports to append `[[services]]` blocks interactively (or see [examples/services.example.toml](examples/services.example.toml) for `tcp` and `http_json` templates):
+```bash
+nullwake-agent discover -config /etc/nullwake/config.toml
+```
+
+The agent also listens on `/run/nullwake.sock` (default mode `0666`) without waking hardware collectors or writing to disk:
 ```bash
 echo '{"service_id":"mc","event":"PlayerAlice joined"}' | nc -U -N /run/nullwake.sock
 ```

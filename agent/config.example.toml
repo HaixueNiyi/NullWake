@@ -20,6 +20,9 @@ file_mode = "0666"
 # Bounded in-memory event ring buffer size per service.
 ring_buffer_size = 200
 
+#Tip: Run `nullwake-agent discover -config /etc/nullwake/config.toml`
+#     to scan active systemd units & listening TCP ports interactively.
+
 # Example 1: Systemd unit queried via DBus only when a client is subscribed.
 [[services]]
 id = "docker"
@@ -27,8 +30,30 @@ name = "Docker Engine"
 type = "systemd"
 unit = "docker.service"
 
-# Example 2: Custom script plugin run on-demand when subscribed.
-# Expected stdout JSON: {"status":"running","summary":"3/20 players","metrics":{"players":3,"tps":20.0}}
+# Example 2: Scriptless TCP port probe with handshake latency (default timeout_ms = 500).
+# [[services]]
+# id = "postgres"
+# name = "PostgreSQL"
+# type = "tcp"
+# addr = "127.0.0.1:5432"
+# timeout_ms = 500
+
+# Example 3: Scriptless HTTP JSON API probe with dot-path field extraction.
+# [[services]]
+# id = "ollama"
+# name = "Ollama API"
+# type = "http_json"
+# url = "http://127.0.0.1:11434/api/version"
+# timeout_ms = 1000
+# summary_template = "Version {version}"
+#
+#   [[services.fields]]
+#   path = "version"
+#   label = "Version"
+
+# Example 4: Custom script plugin run on-demand when subscribed.
+# Preferred ordered stdout JSON:
+#   {"status":"running","summary":"3/20 players","metrics":[{"label":"Players","value":"3/20"},{"label":"TPS","value":"20.0"}]}
 # [[services]]
 # id = "mc"
 # name = "Minecraft Server"
@@ -36,7 +61,7 @@ unit = "docker.service"
 # command = ["/usr/local/bin/mc-status.sh"]
 # timeout_ms = 1500
 
-# Example 3: Push-only service receiving events on /run/nullwake.sock
+# Example 5: Push-only service receiving events on /run/nullwake.sock
 # echo '{"service_id":"backup","event":"Nightly snapshot finished (1.4 GB)"}' | nc -U -N /run/nullwake.sock
 [[services]]
 id = "backup"

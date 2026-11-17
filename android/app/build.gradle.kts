@@ -12,19 +12,43 @@ android {
         applicationId = "io.nullwake.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.0.1"
+        versionCode = 5
+        versionName = "1.1.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
     }
 
+    val keystorePath = System.getenv("NULLWAKE_KEYSTORE_FILE")
+    val hasCiKeystore = !keystorePath.isNullOrBlank() && file(keystorePath).exists()
+
+    signingConfigs {
+        if (hasCiKeystore) {
+            create("ci") {
+                storeFile = file(keystorePath!!)
+                storeType = "PKCS12"
+                storePassword = System.getenv("NULLWAKE_KEYSTORE_PASS")
+                keyAlias = System.getenv("NULLWAKE_KEY_ALIAS")
+                keyPassword = System.getenv("NULLWAKE_KEY_PASS")
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
+    val activeSigningConfig = if (hasCiKeystore) {
+        signingConfigs.getByName("ci")
+    } else {
+        signingConfigs.getByName("debug")
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = activeSigningConfig
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -32,6 +56,7 @@ android {
         }
         debug {
             isMinifyEnabled = false
+            signingConfig = activeSigningConfig
         }
     }
 

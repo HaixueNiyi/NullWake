@@ -2,6 +2,24 @@
 
 All notable changes to **NullWake** are documented in this file.
 
+## [v1.1.0] - 2026-11-17
+
+### Extensible Service Monitoring (可擴展自定義服務監控模組)
+- **有序服務指標協定 (`[]ServiceMetric`)：** 將 `ServiceStatus.metrics` 改為有序陣列 `[{"label": "...", "value": "..."}]`（同時相容舊版 `script` JSON map 輸出），徹底解決 Go Map 亂序導致 Android 卡片欄位跳動的問題，並套用等寬數字（`tnum`）。
+- **免腳本宣告式探測 (`tcp` / `http_json`) 與 Systemd 記憶體採集：**
+  - 新增 `type = "tcp"`：透過標準 `net.Dialer` 檢查本地服務埠（預設 `500ms` 逾時）並回報 TCP 握手延遲。
+  - 新增 `type = "http_json"`：針對 JSON 健康/狀態端點進行 `fields` dot-path 萃取（如 `players.online`）與 `summary_template` 模板格式化。
+  - 增強 `type = "systemd"`：透過 DBus `MemoryCurrent` 與 `/proc/<MainPID>/status` `VmRSS` 自動附帶行程實體記憶體占用。
+  - 所有探測類型統一彙整 `/run/nullwake.sock` 記憶體 Ring Buffer 歷史事件，且嚴格維持無訂閱零待機執行。
+- **互動式探索指令 (`nullwake-agent discover`)：** 內建標準函式庫探索工具，掃描活躍 `systemd` 單元（過濾系統底層元件）與 `/proc/net/tcp{,6}` 監聽埠，互動選擇後預覽並附加 `[[services]]` TOML 設定；同步新增 `examples/services.example.toml` 範例模板。
+
+### Android UI, Theme & Release Signing
+- **主介面卡片標籤：** 繁體中文介面的 `CPU` 與 `RAM` 卡片標題統一維持英文顯示。
+- **預設淺藍色主題與過渡動畫：** 將非動態配色的預設品牌主色調整為高對比淺藍色（Light Blue），並為淺色／深色／AMOLED 純黑切換加入平滑色彩漸變動畫，同步最佳化頁面切換與服務卡片尺寸變化動畫。
+- **持久化 APK 簽章（v1/v2/v3）：** CI 改為使用固定儲存於 GitHub Secrets 的 PKCS12 金鑰簽署所有 Debug 與 Release APK，確保後續版本更新不再出現簽名不一致。
+
+---
+
 ## [v1.0.1] - 2026-11-17
 
 ### Bug Fixes & Performance (連線與採集修正)

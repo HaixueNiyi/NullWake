@@ -1,6 +1,12 @@
 package io.nullwake.app.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -72,7 +78,7 @@ fun DashboardScreen(
         modifier = modifier.fillMaxSize(),
     ) {
         if (uiState.authUrl != null) {
-            item {
+            item(key = "auth_banner") {
                 AuthRequiredCard(
                     authUrl = uiState.authUrl,
                     onOpenAuthUrl = onOpenAuthUrl,
@@ -81,7 +87,7 @@ fun DashboardScreen(
         }
 
         if (!uiState.errorMessage.isNullOrBlank()) {
-            item {
+            item(key = "error_banner") {
                 OutlinedCard(
                     colors = CardDefaults.outlinedCardColors(
                         containerColor = palette.stoppedRed.copy(alpha = 0.12f),
@@ -204,7 +210,11 @@ private fun AuthRequiredCard(
         shape = MaterialTheme.shapes.medium,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .animateContentSize(animationSpec = tween(220))
+                .padding(16.dp),
+        ) {
             Text(
                 text = strings.authRequiredTitle,
                 style = MaterialTheme.typography.titleMedium,
@@ -248,7 +258,11 @@ private fun EmptyWaitingCard(
         shape = MaterialTheme.shapes.medium,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(modifier = Modifier.padding(18.dp)) {
+        Column(
+            modifier = Modifier
+                .animateContentSize(animationSpec = tween(220))
+                .padding(18.dp),
+        ) {
             Text(
                 text = if (selectedHost == null) strings.waitingForHost else strings.connectingTo(selectedHost),
                 style = MaterialTheme.typography.titleMedium,
@@ -302,7 +316,11 @@ private fun MetricSparklineCard(
         shape = MaterialTheme.shapes.medium,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .animateContentSize(animationSpec = tween(220))
+                .padding(16.dp),
+        ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -386,7 +404,11 @@ private fun GpuSparklineCard(
         shape = MaterialTheme.shapes.medium,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .animateContentSize(animationSpec = tween(220))
+                .padding(16.dp),
+        ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,

@@ -1,6 +1,9 @@
 package io.nullwake.app.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -109,7 +112,11 @@ private fun ServiceCard(
         shape = MaterialTheme.shapes.medium,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .animateContentSize(animationSpec = tween(220))
+                .padding(16.dp),
+        ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -141,13 +148,13 @@ private fun ServiceCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    service.metrics.entries.take(4).forEach { (k, v) ->
+                    service.metrics.take(4).forEach { metric ->
                         Surface(
                             color = colors.surfaceContainerHigh,
                             shape = RoundedCornerShape(8.dp),
                         ) {
                             Text(
-                                text = "$k: $v",
+                                text = "${metric.label}: ${metric.value}",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontFeatureSettings = "tnum",
                                 ),
@@ -188,11 +195,16 @@ private fun ServiceCard(
 @Composable
 private fun ServiceStatusPill(status: String) {
     val palette = LocalNullWakePalette.current
-    val color: Color = when (status.lowercase()) {
+    val targetColor: Color = when (status.lowercase()) {
         "running" -> palette.onlineGreen
         "degraded" -> palette.degradedAmber
         else -> palette.stoppedRed
     }
+    val color by animateColorAsState(
+        targetValue = targetColor,
+        animationSpec = tween(250),
+        label = "service_status_color",
+    )
     Surface(
         color = color.copy(alpha = 0.16f),
         shape = RoundedCornerShape(20.dp),
@@ -256,16 +268,16 @@ private fun ServiceDetailBottomSheet(
                     color = colors.onSurfaceVariant,
                 )
                 Spacer(modifier = Modifier.height(6.dp))
-                service.metrics.forEach { (k, v) ->
+                service.metrics.forEach { metric ->
                     Row(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 3.dp),
                     ) {
-                        Text(text = k, color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        Text(text = metric.label, color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                         Text(
-                            text = v,
+                            text = metric.value,
                             color = colors.onSurface,
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontFeatureSettings = "tnum",
