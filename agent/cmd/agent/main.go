@@ -15,7 +15,7 @@ import (
 	"github.com/nullwake/nullwake/agent/internal/service"
 )
 
-var version = "1.2.2"
+var version = "1.0.1"
 
 func main() {
 	var (

@@ -91,6 +91,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		h.logger.Printf("websocket accept error: %v", err)
 		return
 	}
+	conn.SetReadLimit(16 * 1024)
 	defer conn.CloseNow()
 
 	h.handleSession(r.Context(), conn)
@@ -246,6 +247,21 @@ func (s *wsSession) runLoop(
 	watchdogTimeout time.Duration,
 ) {
 	defer close(done)
+
+	// Warm up delta baselines (CPU, Net, Intel RC6) briefly so the initial frame is accurate.
+	if s.hub.collector != nil {
+		warmup := 150 * time.Millisecond
+		if capWarmup := watchdogTimeout / 3; capWarmup < warmup {
+			warmup = capWarmup
+		}
+		_, _ = s.hub.collector.Collect(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(warmup):
+		}
+		s.touchPing()
+	}
 
 	// Send initial telemetry + ring-buffer history immediately upon SUBSCRIBE.
 	if err := s.sendTelemetry(ctx); err != nil && !errors.Is(err, context.Canceled) {

@@ -16,13 +16,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.History
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -40,31 +41,37 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.nullwake.app.model.ServiceStatus
 import io.nullwake.app.model.formatEpochSeconds
-import io.nullwake.app.ui.theme.NullWakeColors
+import io.nullwake.app.ui.i18n.LocalAppStrings
+import io.nullwake.app.ui.theme.LocalNullWakePalette
 
 @Composable
 fun ServiceCardsSection(services: List<ServiceStatus>) {
+    val strings = LocalAppStrings.current
+    val colors = MaterialTheme.colorScheme
+    val palette = LocalNullWakePalette.current
+
     var inspectedServiceId by remember { mutableStateOf<String?>(null) }
     val inspectedService = services.firstOrNull { it.id == inspectedServiceId }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
-            text = "Services & Event Ring Buffer",
+            text = strings.servicesSectionTitle,
             style = MaterialTheme.typography.titleSmall,
-            color = NullWakeColors.TextSecondary,
+            color = colors.onSurfaceVariant,
             fontWeight = FontWeight.SemiBold,
         )
 
         if (services.isEmpty()) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = NullWakeColors.Surface),
-                border = BorderStroke(1.dp, NullWakeColors.Border),
+            OutlinedCard(
+                colors = CardDefaults.outlinedCardColors(containerColor = colors.surfaceContainer),
+                border = BorderStroke(1.dp, palette.cardBorder),
+                shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    text = "No services configured on this host.",
+                    text = strings.noServicesConfigured,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = NullWakeColors.TextSecondary,
+                    color = colors.onSurfaceVariant,
                     modifier = Modifier.padding(16.dp),
                 )
             }
@@ -92,14 +99,17 @@ private fun ServiceCard(
     service: ServiceStatus,
     onClick: () -> Unit,
 ) {
-    Card(
+    val strings = LocalAppStrings.current
+    val colors = MaterialTheme.colorScheme
+
+    ElevatedCard(
         onClick = onClick,
-        colors = CardDefaults.cardColors(containerColor = NullWakeColors.Surface),
-        border = BorderStroke(1.dp, NullWakeColors.Border),
-        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = colors.surfaceContainer),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 1.dp),
+        shape = MaterialTheme.shapes.medium,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -110,13 +120,13 @@ private fun ServiceCard(
                         text = service.name,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = NullWakeColors.TextPrimary,
+                        color = colors.onSurface,
                     )
                     if (service.summary.isNotBlank()) {
                         Text(
                             text = service.summary,
                             style = MaterialTheme.typography.bodySmall,
-                            color = NullWakeColors.TextSecondary,
+                            color = colors.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -133,23 +143,23 @@ private fun ServiceCard(
                 ) {
                     service.metrics.entries.take(4).forEach { (k, v) ->
                         Surface(
-                            color = NullWakeColors.SurfaceVariant,
-                            shape = RoundedCornerShape(6.dp),
+                            color = colors.surfaceContainerHigh,
+                            shape = RoundedCornerShape(8.dp),
                         ) {
                             Text(
                                 text = "$k: $v",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontFeatureSettings = "tnum",
                                 ),
-                                color = NullWakeColors.TextPrimary,
+                                color = colors.onSurface,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             )
                         }
                     }
                     if (service.history.isNotEmpty()) {
                         Surface(
-                            color = NullWakeColors.CpuAccent.copy(alpha = 0.14f),
-                            shape = RoundedCornerShape(6.dp),
+                            color = colors.primaryContainer.copy(alpha = 0.7f),
+                            shape = RoundedCornerShape(8.dp),
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -158,13 +168,13 @@ private fun ServiceCard(
                                 Icon(
                                     imageVector = Icons.Rounded.History,
                                     contentDescription = null,
-                                    tint = NullWakeColors.CpuAccent,
+                                    tint = colors.onPrimaryContainer,
                                     modifier = Modifier.size(12.dp),
                                 )
                                 Text(
-                                    text = " ${service.history.size} events",
+                                    text = " ${strings.eventsCount(service.history.size)}",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = NullWakeColors.CpuAccent,
+                                    color = colors.onPrimaryContainer,
                                 )
                             }
                         }
@@ -177,10 +187,11 @@ private fun ServiceCard(
 
 @Composable
 private fun ServiceStatusPill(status: String) {
+    val palette = LocalNullWakePalette.current
     val color: Color = when (status.lowercase()) {
-        "running" -> NullWakeColors.OnlineGreen
-        "degraded" -> NullWakeColors.DegradedAmber
-        else -> NullWakeColors.StoppedRed
+        "running" -> palette.onlineGreen
+        "degraded" -> palette.degradedAmber
+        else -> palette.stoppedRed
     }
     Surface(
         color = color.copy(alpha = 0.16f),
@@ -202,12 +213,15 @@ private fun ServiceDetailBottomSheet(
     service: ServiceStatus,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalAppStrings.current
+    val colors = MaterialTheme.colorScheme
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = NullWakeColors.Surface,
-        contentColor = NullWakeColors.TextPrimary,
+        containerColor = colors.surfaceContainer,
+        contentColor = colors.onSurface,
     ) {
         Column(
             modifier = Modifier
@@ -228,7 +242,7 @@ private fun ServiceDetailBottomSheet(
                     Text(
                         text = "id: ${service.id} • ${service.summary}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = NullWakeColors.TextSecondary,
+                        color = colors.onSurfaceVariant,
                     )
                 }
                 ServiceStatusPill(status = service.status)
@@ -237,9 +251,9 @@ private fun ServiceDetailBottomSheet(
             if (service.metrics.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(14.dp))
                 Text(
-                    text = "Custom Metrics",
+                    text = strings.customMetrics,
                     style = MaterialTheme.typography.labelLarge,
-                    color = NullWakeColors.TextSecondary,
+                    color = colors.onSurfaceVariant,
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 service.metrics.forEach { (k, v) ->
@@ -249,10 +263,10 @@ private fun ServiceDetailBottomSheet(
                             .fillMaxWidth()
                             .padding(vertical = 3.dp),
                     ) {
-                        Text(text = k, color = NullWakeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                        Text(text = k, color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                         Text(
                             text = v,
-                            color = NullWakeColors.TextPrimary,
+                            color = colors.onSurface,
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontFeatureSettings = "tnum",
                             ),
@@ -263,22 +277,22 @@ private fun ServiceDetailBottomSheet(
             }
 
             Spacer(modifier = Modifier.height(14.dp))
-            HorizontalDivider(color = NullWakeColors.Border)
+            HorizontalDivider(color = colors.outlineVariant)
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = "In-Memory Ring Buffer History (${service.history.size})",
+                text = strings.ringBufferHistory(service.history.size),
                 style = MaterialTheme.typography.labelLarge,
-                color = NullWakeColors.TextSecondary,
+                color = colors.onSurfaceVariant,
             )
             Spacer(modifier = Modifier.height(8.dp))
 
             val newestFirst = remember(service.history) { service.history.asReversed() }
             if (newestFirst.isEmpty()) {
                 Text(
-                    text = "No push events recorded yet.",
+                    text = strings.noPushEventsYet,
                     style = MaterialTheme.typography.bodySmall,
-                    color = NullWakeColors.TextSecondary,
+                    color = colors.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 24.dp),
                 )
             } else {
@@ -300,12 +314,12 @@ private fun ServiceDetailBottomSheet(
                                     fontFeatureSettings = "tnum",
                                 ),
                                 fontFamily = FontFamily.Monospace,
-                                color = NullWakeColors.CpuAccent,
+                                color = colors.primary,
                             )
                             Text(
                                 text = item.event,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = NullWakeColors.TextPrimary,
+                                color = colors.onSurface,
                                 modifier = Modifier.weight(1f),
                             )
                         }

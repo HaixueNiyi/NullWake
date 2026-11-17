@@ -3,8 +3,10 @@ package collector
 import (
 	"bufio"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -146,57 +148,54 @@ func (c *cpuCollector) readFreqMHz() int {
 }
 
 func (c *cpuCollector) readTempC() float64 {
-	// Prefer named CPU hwmon sensors first.
-	preferredHwmon := map[string]bool{
-		"coretemp":    true,
-		"k10temp":     true,
-		"zenpower":    true,
-		"cpu_thermal": true,
-		"acpitz":      true,
-	}
+	// Check CPU die sensors in strict priority order so chassis acpitz never shadows coretemp/k10temp.
+	hwmonOrder := []string{"coretemp", "k10temp", "zenpower", "cpu_thermal", "acpitz"}
 	hwmonDirs, _ := filepath.Glob(filepath.Join(c.sysRoot, "class/hwmon/hwmon*"))
-	for _, dir := range hwmonDirs {
-		name, err := readTrimmed(filepath.Join(dir, "name"))
-		if err != nil || !preferredHwmon[name] {
-			continue
-		}
-		inputs, _ := filepath.Glob(filepath.Join(dir, "temp*_input"))
-		for _, in := range inputs {
-			if milli, err := readFloat64File(in); err == nil && milli > 0 {
-				return milli / 1000.0
+	sort.Strings(hwmonDirs)
+
+	for _, target := range hwmonOrder {
+		for _, dir := range hwmonDirs {
+			name, err := readTrimmed(filepath.Join(dir, "name"))
+			if err != nil || name != target {
+				continue
+			}
+			inputs, _ := filepath.Glob(filepath.Join(dir, "temp*_input"))
+			sort.Strings(inputs)
+			for _, in := range inputs {
+				if milli, err := readFloat64File(in); err == nil && milli > 0 && milli <= 125000 {
+					return milli / 1000.0
+				}
 			}
 		}
 	}
 
-	// Fallback to /sys/class/thermal/thermal_zone*
+	// Fallback to /sys/class/thermal/thermal_zone* in priority order.
 	zones, _ := filepath.Glob(filepath.Join(c.sysRoot, "class/thermal/thermal_zone*"))
-	preferredZones := map[string]bool{
-		"x86_pkg_temp": true,
-		"cpu-thermal":  true,
-		"acpitz":       true,
+	sort.Strings(zones)
+	zoneOrder := []string{"x86_pkg_temp", "cpu-thermal", "acpitz"}
+	for _, target := range zoneOrder {
+		for _, z := range zones {
+			zType, _ := readTrimmed(filepath.Join(z, "type"))
+			if zType != target {
+				continue
+			}
+			if tVal, err := readFloat64File(filepath.Join(z, "temp")); err == nil && tVal > 0 && tVal <= 125000 {
+				return tVal / 1000.0
+			}
+		}
 	}
-	var fallbackTemp float64
 	for _, z := range zones {
-		tVal, err := readFloat64File(filepath.Join(z, "temp"))
-		if err != nil || tVal <= 0 {
-			continue
-		}
-		tempC := tVal / 1000.0
-		zType, _ := readTrimmed(filepath.Join(z, "type"))
-		if preferredZones[zType] {
-			return tempC
-		}
-		if fallbackTemp == 0 {
-			fallbackTemp = tempC
+		if tVal, err := readFloat64File(filepath.Join(z, "temp")); err == nil && tVal > 0 && tVal <= 125000 {
+			return tVal / 1000.0
 		}
 	}
-	return fallbackTemp
+	return 0
 }
 
 func round1(v float64) float64 {
-	return float64(int(v*10+0.5)) / 10.0
+	return math.Round(v*10) / 10.0
 }
 
 func round2(v float64) float64 {
-	return float64(int(v*100+0.5)) / 100.0
+	return math.Round(v*100) / 100.0
 }

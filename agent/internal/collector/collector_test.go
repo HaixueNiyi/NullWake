@@ -40,6 +40,7 @@ func TestCPU_RAM_Net_Collectors(t *testing.T) {
 		"Inter-|   Receive                                                |  Transmit\n"+
 		" face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n"+
 		"    lo: 9999999 100 0 0 0 0 0 0 9999999 100 0 0 0 0 0 0\n"+
+		"  tun0: 8888888 100 0 0 0 0 0 0 8888888 100 0 0 0 0 0 0\n"+
 		"  eth0:  100000  10 0 0 0 0 0 0   50000  10 0 0 0 0 0 0\n")
 
 	now := time.Unix(1730000000, 0)
@@ -69,6 +70,7 @@ func TestCPU_RAM_Net_Collectors(t *testing.T) {
 	writeFakeFile(t, filepath.Join(proc, "net/dev"), ""+
 		"Inter-|   Receive\n face |bytes\n"+
 		"    lo: 9999999 100 0 0 0 0 0 0 9999999 100 0 0 0 0 0 0\n"+
+		"  tun0: 9999999 100 0 0 0 0 0 0 9999999 100 0 0 0 0 0 0\n"+
 		"  eth0:  200000  20 0 0 0 0 0 0  110000  20 0 0 0 0 0 0\n")
 
 	snap2, err := c.Collect(context.Background())
@@ -166,5 +168,54 @@ func TestParseIntelGPUTopJSON(t *testing.T) {
 	val, ok := parseIntelGPUTopJSON([]byte(sample))
 	if !ok || val != 42.5 {
 		t.Fatalf("got (%v, %v), want (42.5, true)", val, ok)
+	}
+}
+
+func TestIntelRC6ResidencyAndCoretempPriority(t *testing.T) {
+	root := t.TempDir()
+	proc := filepath.Join(root, "proc")
+	sys := filepath.Join(root, "sys")
+
+	writeFakeFile(t, filepath.Join(proc, "stat"), "cpu 10 0 10 80 0 0 0 0 0 0\n")
+	writeFakeFile(t, filepath.Join(proc, "meminfo"), "MemTotal: 1024000 kB\nMemAvailable: 512000 kB\n")
+	writeFakeFile(t, filepath.Join(proc, "net/dev"), "Inter-|\n face |\n")
+
+	// hwmon1 is acpitz, hwmon5 is coretemp -> coretemp must win regardless of glob order.
+	writeFakeFile(t, filepath.Join(sys, "class/hwmon/hwmon1/name"), "acpitz\n")
+	writeFakeFile(t, filepath.Join(sys, "class/hwmon/hwmon1/temp1_input"), "29000\n")
+	writeFakeFile(t, filepath.Join(sys, "class/hwmon/hwmon5/name"), "coretemp\n")
+	writeFakeFile(t, filepath.Join(sys, "class/hwmon/hwmon5/temp1_input"), "41500\n")
+
+	// Intel i915 card with high requested gt_cur_freq_mhz (883) but 100% RC6 idle residency.
+	writeFakeFile(t, filepath.Join(sys, "class/drm/card1/device/vendor"), "0x8086\n")
+	writeFakeFile(t, filepath.Join(sys, "class/drm/card1/gt_cur_freq_mhz"), "883\n")
+	writeFakeFile(t, filepath.Join(sys, "class/drm/card1/gt_max_freq_mhz"), "1000\n")
+	writeFakeFile(t, filepath.Join(sys, "class/drm/card1/gt/gt0/rc6_residency_ms"), "10000\n")
+
+	now := time.Unix(1730000000, 0)
+	c := New(WithRoots(proc, sys))
+	c.gpu.rc6NowFn = func() time.Time { return now }
+
+	snap1, err := c.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("first collect failed: %v", err)
+	}
+	if snap1.CPU.TempC != 41.5 {
+		t.Fatalf("expected coretemp 41.5°C over acpitz 29.0°C, got %v", snap1.CPU.TempC)
+	}
+	if snap1.GPU == nil || snap1.GPU.UsagePercent != 0 {
+		t.Fatalf("expected 0 initial GPU usage, got %+v", snap1.GPU)
+	}
+
+	// Simulate 1000ms elapsed with 750ms in RC6 idle -> 25% active GPU busy.
+	now = now.Add(1000 * time.Millisecond)
+	writeFakeFile(t, filepath.Join(sys, "class/drm/card1/gt/gt0/rc6_residency_ms"), "10750\n")
+
+	snap2, err := c.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("second collect failed: %v", err)
+	}
+	if snap2.GPU.UsagePercent != 25.0 {
+		t.Fatalf("expected 25.0%% GPU busy from RC6 delta, got %v", snap2.GPU.UsagePercent)
 	}
 }

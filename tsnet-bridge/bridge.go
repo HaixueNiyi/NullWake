@@ -81,12 +81,14 @@ func Stop() {
 
 // Bridge manages an embedded userspace tsnet node and WebSocket telemetry stream.
 type Bridge struct {
-	mu          sync.Mutex
-	ts          *tsnet.Server
-	localClient *local.Client
-	listener    BridgeListener
-	watchCancel context.CancelFunc
-	watchDone   chan struct{}
+	mu            sync.Mutex
+	ts            *tsnet.Server
+	localClient   *local.Client
+	httpTransport *http.Transport
+	httpClient    *http.Client
+	listener      BridgeListener
+	watchCancel   context.CancelFunc
+	watchDone     chan struct{}
 
 	subMu     sync.Mutex
 	subConn   *websocket.Conn
@@ -144,9 +146,20 @@ func (b *Bridge) Start(stateDir string, authKey string, proxyURL string, listene
 	watchCtx, watchCancel := context.WithCancel(context.Background())
 	watchDone := make(chan struct{})
 
+	tr := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return ts.Dial(ctx, network, addr)
+		},
+		MaxIdleConns:    4,
+		IdleConnTimeout: 30 * time.Second,
+	}
+	hc := &http.Client{Transport: tr}
+
 	b.mu.Lock()
 	b.ts = ts
 	b.localClient = lc
+	b.httpTransport = tr
+	b.httpClient = hc
 	b.listener = listener
 	b.watchCancel = watchCancel
 	b.watchDone = watchDone
@@ -257,23 +270,20 @@ func (b *Bridge) SubscribeNode(targetAddr string, intervalMs int64) error {
 	}
 
 	b.mu.Lock()
-	ts := b.ts
+	httpClient := b.httpClient
 	listener := b.listener
 	b.mu.Unlock()
 
-	dialer := &net.Dialer{Timeout: 8 * time.Second}
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				if ts != nil {
-					return ts.Dial(ctx, network, addr)
-				}
-				return dialer.DialContext(ctx, network, addr)
+	if httpClient == nil {
+		dialer := &net.Dialer{Timeout: 12 * time.Second}
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				DialContext: dialer.DialContext,
 			},
-		},
+		}
 	}
 
-	dialCtx, dialCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer dialCancel()
 
 	wsURL := "ws://" + hostPort + "/ws"
@@ -329,7 +339,7 @@ func (b *Bridge) Unsubscribe() {
 
 	if conn != nil {
 		unsubPayload, _ := json.Marshal(clientMessage{Type: "UNSUBSCRIBE"})
-		wCtx, wCancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		wCtx, wCancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 		_ = conn.Write(wCtx, websocket.MessageText, unsubPayload)
 		wCancel()
 		_ = conn.Close(websocket.StatusNormalClosure, "unsubscribe")
@@ -350,10 +360,13 @@ func (b *Bridge) Stop() {
 	watchCancel := b.watchCancel
 	watchDone := b.watchDone
 	ts := b.ts
+	tr := b.httpTransport
 	b.watchCancel = nil
 	b.watchDone = nil
 	b.ts = nil
 	b.localClient = nil
+	b.httpTransport = nil
+	b.httpClient = nil
 	b.mu.Unlock()
 
 	if watchCancel != nil {
@@ -361,6 +374,9 @@ func (b *Bridge) Stop() {
 	}
 	if watchDone != nil {
 		<-watchDone
+	}
+	if tr != nil {
+		tr.CloseIdleConnections()
 	}
 	if ts != nil {
 		_ = ts.Close()
@@ -377,11 +393,21 @@ func (b *Bridge) runSubscription(
 	defer close(done)
 	defer cancel()
 	defer conn.CloseNow()
+	defer func() {
+		if r := recover(); r != nil && listener != nil {
+			listener.OnError(fmt.Sprintf("stream panic: %v", r))
+		}
+	}()
 
 	var writeMu sync.Mutex
 	pingPayload, _ := json.Marshal(clientMessage{Type: "PING"})
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				cancel()
+			}
+		}()
 		ticker := time.NewTicker(pingInterval)
 		defer ticker.Stop()
 		for {
@@ -427,7 +453,7 @@ func (b *Bridge) watchIPNBus(ctx context.Context, lc *local.Client, listener Bri
 	var lastState string
 	var lastAuthURL string
 
-	watcher, err := lc.WatchIPNBus(ctx, ipn.NotifyInitialState)
+	watcher, err := lc.WatchIPNBus(ctx, ipn.NotifyInitialState|ipn.NotifyInitialStatus|ipn.NotifyPeerChanges)
 	if err != nil {
 		if ctx.Err() == nil && listener != nil {
 			listener.OnError(fmt.Sprintf("watch ipn bus: %v", err))
@@ -444,6 +470,12 @@ func (b *Bridge) watchIPNBus(ctx context.Context, lc *local.Client, listener Bri
 			}
 			return
 		}
+		if n.InitialStatus != nil && n.InitialStatus.BackendState != "" && n.InitialStatus.BackendState != lastState {
+			lastState = n.InitialStatus.BackendState
+			if listener != nil {
+				listener.OnStateChange(lastState)
+			}
+		}
 		if n.State != nil {
 			stateStr := n.State.String()
 			if stateStr != lastState {
@@ -457,6 +489,11 @@ func (b *Bridge) watchIPNBus(ctx context.Context, lc *local.Client, listener Bri
 			lastAuthURL = *n.BrowseToURL
 			if listener != nil {
 				listener.OnAuthURL(*n.BrowseToURL)
+			}
+		}
+		if len(n.PeersChanged) > 0 || len(n.PeerChangedPatch) > 0 || len(n.PeersRemoved) > 0 {
+			if listener != nil {
+				listener.OnStateChange("PeersUpdated")
 			}
 		}
 	}

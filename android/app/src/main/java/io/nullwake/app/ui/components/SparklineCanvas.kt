@@ -3,6 +3,7 @@ package io.nullwake.app.ui.components
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -15,21 +16,22 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import io.nullwake.app.ui.theme.NullWakeColors
 
 /**
- * Lightweight 60-point rolling sparkline drawn directly on Compose Canvas with cubic Bezier smoothing.
+ * Lightweight 60-point rolling sparkline drawn on Compose Canvas with cubic Bezier smoothing.
  */
 @Composable
 fun SparklineCanvas(
     points: List<Float>,
     lineColor: Color,
     modifier: Modifier = Modifier,
-    height: Dp = 72.dp,
+    height: Dp = 74.dp,
     maxValue: Float? = 100f,
     secondaryPoints: List<Float>? = null,
-    secondaryColor: Color = NullWakeColors.NetTxAccent,
+    secondaryColor: Color = lineColor,
 ) {
+    val gridColor = MaterialTheme.colorScheme.outlineVariant
+
     Canvas(
         modifier = modifier
             .fillMaxWidth()
@@ -46,21 +48,21 @@ fun SparklineCanvas(
         // Subtle horizontal reference lines at 100% (top), 50% (mid), and baseline.
         val dashEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 7f), 0f)
         drawLine(
-            color = NullWakeColors.Border.copy(alpha = 0.55f),
+            color = gridColor.copy(alpha = 0.7f),
             start = Offset(0f, padTop),
             end = Offset(width, padTop),
             strokeWidth = 1.dp.toPx(),
             pathEffect = dashEffect,
         )
         drawLine(
-            color = NullWakeColors.Border.copy(alpha = 0.55f),
+            color = gridColor.copy(alpha = 0.7f),
             start = Offset(0f, padTop + usableHeight * 0.5f),
             end = Offset(width, padTop + usableHeight * 0.5f),
             strokeWidth = 1.dp.toPx(),
             pathEffect = dashEffect,
         )
         drawLine(
-            color = NullWakeColors.Border.copy(alpha = 0.4f),
+            color = gridColor.copy(alpha = 0.5f),
             start = Offset(0f, padTop + usableHeight),
             end = Offset(width, padTop + usableHeight),
             strokeWidth = 1.dp.toPx(),
@@ -72,9 +74,9 @@ fun SparklineCanvas(
             maxOf(m1, m2, 1f) * 1.15f
         }
 
-        fun drawSeries(series: List<Float>, color: Color, fillGradient: Boolean) {
+        fun drawSeries(series: List<Float>, color: Color, fillAlphaTop: Float) {
             if (series.isEmpty()) return
-            val maxSlots = 59f // 60-point rolling window anchored to right edge
+            val maxSlots = 59f
             val startIndex = (60 - series.size).coerceAtLeast(0)
 
             val coords = series.mapIndexed { idx, value ->
@@ -99,7 +101,7 @@ fun SparklineCanvas(
                 }
             }
 
-            if (fillGradient) {
+            if (fillAlphaTop > 0f) {
                 val fillPath = Path().apply {
                     addPath(linePath)
                     lineTo(coords.last().x, padTop + usableHeight)
@@ -109,8 +111,8 @@ fun SparklineCanvas(
                 drawPath(
                     path = fillPath,
                     brush = Brush.verticalGradient(
-                        0.0f to color.copy(alpha = 0.34f),
-                        0.6f to color.copy(alpha = 0.10f),
+                        0.0f to color.copy(alpha = fillAlphaTop),
+                        0.6f to color.copy(alpha = fillAlphaTop * 0.3f),
                         1.0f to color.copy(alpha = 0.0f),
                         startY = padTop,
                         endY = padTop + usableHeight,
@@ -128,15 +130,14 @@ fun SparklineCanvas(
                 ),
             )
 
-            // Highlight latest sample point.
             val last = coords.last()
             drawCircle(color = color.copy(alpha = 0.25f), radius = 5.dp.toPx(), center = last)
             drawCircle(color = color, radius = 2.6.dp.toPx(), center = last)
         }
 
         if (!secondaryPoints.isNullOrEmpty()) {
-            drawSeries(secondaryPoints, secondaryColor, fillGradient = false)
+            drawSeries(secondaryPoints, secondaryColor, fillAlphaTop = 0.14f)
         }
-        drawSeries(points, lineColor, fillGradient = true)
+        drawSeries(points, lineColor, fillAlphaTop = 0.32f)
     }
 }

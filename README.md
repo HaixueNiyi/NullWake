@@ -1,4 +1,4 @@
-# NullWake (v1.2)
+# NullWake
 
 [![NullWake CI](https://github.com/HaixueNiyi/NullWake/actions/workflows/build.yml/badge.svg)](https://github.com/HaixueNiyi/NullWake/actions/workflows/build.yml)
 
@@ -125,7 +125,7 @@ sudo ./deploy/install.sh
 ```
 This builds a static single binary (`CGO_ENABLED=0`), creates the `nullwake` system user, installs `/etc/nullwake/config.toml` from `agent/config.example.toml`, and installs `deploy/nullwake-agent.service` with `AmbientCapabilities=CAP_PERFMON` for unprivileged Intel iGPU PMU telemetry (`i915/rcs0-busy`).
 
-> Prebuilt static Linux binaries (`nullwake-agent-linux-amd64` / `arm64`) and Android APKs (`nullwake-android`) are also compiled automatically on every push via [GitHub Actions](https://github.com/HaixueNiyi/NullWake/actions).
+> Prebuilt static Linux binaries (`nullwake-agent-linux-amd64`) and Android APKs (`nullwake-android-arm64-v8a-release.apk`, `nullwake-android-arm64-v8a-debug.apk`) are published on [GitHub Releases](https://github.com/HaixueNiyi/NullWake/releases) and built automatically via [GitHub Actions](https://github.com/HaixueNiyi/NullWake/actions).
 
 ### 2. First-Run Tailscale Login
 Either set `auth_key` in `/etc/nullwake/config.toml` (or `TS_AUTHKEY`) before starting, or start the service and follow logs for the interactive login URL:
@@ -143,7 +143,7 @@ Even if a `service_id` is not declared in `config.toml`, it automatically appear
 
 ### 4. GPU Telemetry Notes
 - **AMD (`amdgpu`):** Reads `gpu_busy_percent`, `mem_info_vram_used`, `mem_info_vram_total`, and `hwmon/temp1_input` from `/sys/class/drm/card*/device/`.
-- **Intel (`i915`):** Opens the `i915/rcs0-busy` perf PMU descriptor strictly while subscribed (`CAP_PERFMON` provided by systemd), falling back to `intel_gpu_top -J` or `gt_cur_freq_mhz / gt_max_freq_mhz` if PMU access is unavailable. PMU file descriptors are closed immediately on `UNSUBSCRIBE`.
+- **Intel (`i915`):** Opens the `i915/rcs0-busy` perf PMU descriptor strictly while subscribed (`CAP_PERFMON` provided by systemd), falls back to kernel sysfs `rc6_residency_ms` idle delta (accurate without root), then `intel_gpu_top -J` or `rps_act_freq_mhz / gt_max_freq_mhz`. PMU file descriptors are closed immediately on `UNSUBSCRIBE`.
 - **Headless / VPS:** Cleanly disabled (`"gpu": null`).
 
 ---

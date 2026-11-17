@@ -59,7 +59,7 @@ func syntheticAndroidInterfaces() []netmon.Interface {
 }
 
 func outboundSourceIP(network, target string) (netip.Addr, bool) {
-	d := net.Dialer{Timeout: 2 * time.Second}
+	d := net.Dialer{Timeout: 500 * time.Millisecond}
 	c, err := d.Dial(network, target)
 	if err != nil {
 		return netip.Addr{}, false

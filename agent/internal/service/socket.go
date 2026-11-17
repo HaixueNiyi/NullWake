@@ -9,8 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/nullwake/nullwake/agent/internal/protocol"
+)
+
+const (
+	maxSocketConns    = 32
+	socketReadTimeout = 30 * time.Second
 )
 
 // SocketServer accepts single-line JSON push events over a Unix Domain Socket
@@ -20,6 +26,7 @@ type SocketServer struct {
 	mode     os.FileMode
 	rb       *RingBuffer
 	listener net.Listener
+	sem      chan struct{}
 	wg       sync.WaitGroup
 	mu       sync.Mutex
 	closed   bool
@@ -58,6 +65,7 @@ func NewSocketServer(path string, mode os.FileMode, rb *RingBuffer) (*SocketServ
 		mode:     mode,
 		rb:       rb,
 		listener: ln,
+		sem:      make(chan struct{}, maxSocketConns),
 	}
 
 	s.wg.Add(1)
@@ -78,18 +86,27 @@ func (s *SocketServer) acceptLoop() {
 			}
 			continue
 		}
-		s.wg.Add(1)
-		go s.handleConn(conn)
+		select {
+		case s.sem <- struct{}{}:
+			s.wg.Add(1)
+			go s.handleConn(conn)
+		default:
+			// Shed excess concurrent local writers rather than exhausting file descriptors.
+			_ = conn.Close()
+		}
 	}
 }
 
 func (s *SocketServer) handleConn(conn net.Conn) {
 	defer s.wg.Done()
+	defer func() { <-s.sem }()
 	defer conn.Close()
 
+	_ = conn.SetReadDeadline(time.Now().Add(socketReadTimeout))
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 4096), 64*1024)
 	for scanner.Scan() {
+		_ = conn.SetReadDeadline(time.Now().Add(socketReadTimeout))
 		line := scanner.Bytes()
 		if len(line) == 0 {
 			continue

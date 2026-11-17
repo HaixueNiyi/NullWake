@@ -127,11 +127,12 @@ jobs:
           name: nullwake-android
           path: release-assets
 
-      - name: Collect Release Assets
+      - name: Collect Release Assets (3 files)
         run: |
           mkdir -p final-assets
-          cp release-assets/nullwake-agent-linux-* final-assets/
-          find release-assets -name "*.apk" -exec cp {} final-assets/ \;
+          cp release-assets/nullwake-agent-linux-amd64 final-assets/nullwake-agent-linux-amd64
+          cp release-assets/release/app-release.apk final-assets/nullwake-android-arm64-v8a-release.apk
+          cp release-assets/debug/app-debug.apk final-assets/nullwake-android-arm64-v8a-debug.apk
           ls -lh final-assets
 
       - name: Create GitHub Release

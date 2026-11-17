@@ -8,11 +8,14 @@ import (
 	"github.com/nullwake/nullwake/agent/internal/protocol"
 )
 
+const defaultMaxServices = 64
+
 // RingBuffer stores bounded per-service event histories strictly in memory.
 type RingBuffer struct {
-	mu       sync.RWMutex
-	capacity int
-	items    map[string]*serviceRing
+	mu          sync.RWMutex
+	capacity    int
+	maxServices int
+	items       map[string]*serviceRing
 }
 
 type serviceRing struct {
@@ -27,8 +30,9 @@ func NewRingBuffer(capacity int) *RingBuffer {
 		capacity = 200
 	}
 	return &RingBuffer{
-		capacity: capacity,
-		items:    make(map[string]*serviceRing),
+		capacity:    capacity,
+		maxServices: defaultMaxServices,
+		items:       make(map[string]*serviceRing),
 	}
 }
 
@@ -46,6 +50,9 @@ func (r *RingBuffer) Push(serviceID string, ev protocol.HistoryEvent) {
 
 	ring, ok := r.items[serviceID]
 	if !ok {
+		if len(r.items) >= r.maxServices {
+			return
+		}
 		ring = &serviceRing{
 			buf: make([]protocol.HistoryEvent, r.capacity),
 		}

@@ -86,7 +86,7 @@ func (n *netCollector) readCounters() (rxTotal uint64, txTotal uint64, err error
 			continue
 		}
 		iface := strings.TrimSpace(line[:colon])
-		if iface == "lo" || iface == "" {
+		if isVirtualInterface(iface) {
 			continue
 		}
 		fields := strings.Fields(line[colon+1:])
@@ -105,4 +105,20 @@ func (n *netCollector) readCounters() (rxTotal uint64, txTotal uint64, err error
 		return 0, 0, err
 	}
 	return rxTotal, txTotal, nil
+}
+
+func isVirtualInterface(iface string) bool {
+	if iface == "" || iface == "lo" {
+		return true
+	}
+	virtualPrefixes := []string{
+		"tun", "tap", "veth", "docker", "br-", "virbr",
+		"tailscale", "wg", "ifb", "cni", "flannel", "cali", "kube-",
+	}
+	for _, prefix := range virtualPrefixes {
+		if strings.HasPrefix(iface, prefix) {
+			return true
+		}
+	}
+	return false
 }

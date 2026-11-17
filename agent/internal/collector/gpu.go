@@ -35,12 +35,19 @@ type gpuCollector struct {
 	prevBusyNs    uint64
 	prevSampleAt  time.Time
 	hasPrevSample bool
+
+	// Intel RC6 residency tracking (unprivileged sysfs fallback).
+	prevRC6Ms    uint64
+	prevRC6At    time.Time
+	hasPrevRC6   bool
+	rc6NowFn     func() time.Time
 }
 
 func newGPUCollector(sysRoot string) *gpuCollector {
 	return &gpuCollector{
-		sysRoot: sysRoot,
-		pmuFD:   -1,
+		sysRoot:  sysRoot,
+		pmuFD:    -1,
+		rc6NowFn: time.Now,
 	}
 }
 
@@ -128,6 +135,12 @@ func (g *gpuCollector) collectAMD() *protocol.GPUMetrics {
 
 func (g *gpuCollector) collectIntel(ctx context.Context) *protocol.GPUMetrics {
 	usage, ok := g.readIntelPMUUsage()
+	if !ok {
+		if rc6Usage, rc6OK := g.readIntelRC6Usage(); rc6OK {
+			usage = rc6Usage
+			ok = true
+		}
+	}
 	if !ok && g.sysRoot == "/sys" {
 		if topUsage, topOK := g.readIntelGPUTop(ctx); topOK {
 			usage = topUsage
@@ -154,10 +167,44 @@ func (g *gpuCollector) collectIntel(ctx context.Context) *protocol.GPUMetrics {
 	}
 }
 
+// readIntelRC6Usage computes i915 active GPU busy % from kernel RC6 idle residency ms
+// without requiring CAP_PERFMON or external tools.
+func (g *gpuCollector) readIntelRC6Usage() (float64, bool) {
+	rc6Ms, err := readFirstUint64(
+		filepath.Join(g.cardPath, "gt/gt0/rc6_residency_ms"),
+		filepath.Join(g.cardPath, "power/rc6_residency_ms"),
+	)
+	if err != nil {
+		return 0, false
+	}
+
+	now := g.rc6NowFn()
+	var usage float64
+	if g.hasPrevRC6 {
+		elapsedMs := float64(now.Sub(g.prevRC6At).Milliseconds())
+		if elapsedMs > 0 && rc6Ms >= g.prevRC6Ms {
+			deltaRC6Ms := float64(rc6Ms - g.prevRC6Ms)
+			// Clamp idle ratio so minor kernel timer jitter never yields negative busy %.
+			if deltaRC6Ms >= elapsedMs {
+				usage = 0
+			} else {
+				usage = (1.0 - deltaRC6Ms/elapsedMs) * 100.0
+			}
+		}
+	}
+	g.prevRC6Ms = rc6Ms
+	g.prevRC6At = now
+	g.hasPrevRC6 = true
+	return clampPercent(usage), true
+}
+
 func (g *gpuCollector) estimateIntelUsageFromFreq() float64 {
+	// Prefer rps_act_freq_mhz (actual clocked frequency, 0 when RC6-gated) over requested cur_freq.
 	curFreq, err1 := readFirstUint64(
-		filepath.Join(g.cardPath, "gt_cur_freq_mhz"),
+		filepath.Join(g.cardPath, "gt/gt0/rps_act_freq_mhz"),
+		filepath.Join(g.cardPath, "gt_act_freq_mhz"),
 		filepath.Join(g.cardPath, "gt/gt0/rps_cur_freq_mhz"),
+		filepath.Join(g.cardPath, "gt_cur_freq_mhz"),
 	)
 	maxFreq, err2 := readFirstUint64(
 		filepath.Join(g.cardPath, "gt_max_freq_mhz"),
@@ -179,7 +226,6 @@ func (g *gpuCollector) readIntelGPUTop(ctx context.Context) (float64, bool) {
 
 	cmd := exec.CommandContext(runCtx, bin, "-J", "-s", "100", "-o", "-")
 	out, err := cmd.Output()
-	// intel_gpu_top streams JSON arrays/objects until killed or EOF; partial stdout can still contain valid JSON.
 	if len(out) == 0 && err != nil {
 		return 0, false
 	}
@@ -192,7 +238,6 @@ func parseIntelGPUTopJSON(raw []byte) (float64, bool) {
 	if text == "" {
 		return 0, false
 	}
-	// intel_gpu_top -J emits an array or stream of frames; scan backwards for the latest complete "engines" map.
 	search := text
 	for {
 		idx := strings.LastIndex(search, `"engines"`)
@@ -228,7 +273,7 @@ func maxEngineBusy(engines map[string]struct {
 func (g *gpuCollector) readDeviceHwmonTemp(cardPath string) float64 {
 	inputs, _ := filepath.Glob(filepath.Join(cardPath, "device/hwmon/hwmon*/temp1_input"))
 	for _, p := range inputs {
-		if milli, err := readFloat64File(p); err == nil && milli > 0 {
+		if milli, err := readFloat64File(p); err == nil && milli > 0 && milli <= 130000 {
 			return milli / 1000.0
 		}
 	}
@@ -241,6 +286,9 @@ func (g *gpuCollector) reset() {
 	g.prevBusyNs = 0
 	g.prevSampleAt = time.Time{}
 	g.hasPrevSample = false
+	g.prevRC6Ms = 0
+	g.prevRC6At = time.Time{}
+	g.hasPrevRC6 = false
 }
 
 func fileExists(path string) bool {
