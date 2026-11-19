@@ -2,6 +2,20 @@
 
 All notable changes to **NullWake** are documented in this file.
 
+## [v1.1.1] - 2026-11-19
+
+### Linux Agent Reliability & Concurrency
+- **共享採集循環與 Fan-out 廣播：** 將 `Hub` 改為單一共享採集迴圈並廣播給所有活躍訂閱者，修復多台裝置同時連線時互相覆蓋 CPU／網路／GPU delta 基準導致數據失真的問題；無訂閱時依然完全休眠。
+- **WebSocket Origin 檢查：** 預設允許無 `Origin` 的原生客戶端及 `localhost` / `127.0.0.1` / `[::1]`，防止跨站 WebSocket 劫持。
+- **平行服務探測與立即關閉 Socket：** `CollectServices` 改為平行探測（最多 8 併發），避免單一慢速服務拖慢整幀；`SocketServer.Close()` 主動關閉進行中的連線，不再等待 30 秒逾時。
+- **動態服務 LRU 淘汰：** `RingBuffer` 保護設定檔內服務不被覆蓋，並依最近更新時間淘汰最舊的未設定動態服務。
+
+### Android & `tsnet-bridge` Fixes
+- **生命週期序列化與斷線自動重連：** `Bridge.Start()` / `Stop()` 加入互斥鎖保護、`SubscribeNode()` 在未啟動 `tsnet` 時快速失敗；Android `NullWakeViewModel` 序列化 `startBridge()`、非同步執行 `onCleared()` 清理，並新增前台指數退避自動重連機制。
+- **自訂 Agent 通訊埠：** 設定頁面新增 `Agent 通訊埠`（預設 `9100`），可連線使用非預設 `listen_port` 的 Linux 節點。
+
+---
+
 ## [v1.1.0] - 2026-11-17
 
 ### Extensible Service Monitoring (可擴展自定義服務監控模組)
