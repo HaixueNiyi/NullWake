@@ -29,6 +29,7 @@ type SocketServer struct {
 	sem      chan struct{}
 	wg       sync.WaitGroup
 	mu       sync.Mutex
+	conns    map[net.Conn]struct{}
 	closed   bool
 }
 
@@ -66,6 +67,7 @@ func NewSocketServer(path string, mode os.FileMode, rb *RingBuffer) (*SocketServ
 		rb:       rb,
 		listener: ln,
 		sem:      make(chan struct{}, maxSocketConns),
+		conns:    make(map[net.Conn]struct{}),
 	}
 
 	s.wg.Add(1)
@@ -88,6 +90,16 @@ func (s *SocketServer) acceptLoop() {
 		}
 		select {
 		case s.sem <- struct{}{}:
+			s.mu.Lock()
+			if s.closed {
+				s.mu.Unlock()
+				<-s.sem
+				_ = conn.Close()
+				return
+			}
+			s.conns[conn] = struct{}{}
+			s.mu.Unlock()
+
 			s.wg.Add(1)
 			go s.handleConn(conn)
 		default:
@@ -100,7 +112,12 @@ func (s *SocketServer) acceptLoop() {
 func (s *SocketServer) handleConn(conn net.Conn) {
 	defer s.wg.Done()
 	defer func() { <-s.sem }()
-	defer conn.Close()
+	defer func() {
+		s.mu.Lock()
+		delete(s.conns, conn)
+		s.mu.Unlock()
+		_ = conn.Close()
+	}()
 
 	_ = conn.SetReadDeadline(time.Now().Add(socketReadTimeout))
 	scanner := bufio.NewScanner(conn)
@@ -125,7 +142,7 @@ func (s *SocketServer) handleConn(conn net.Conn) {
 	}
 }
 
-// Close stops accepting new connections, waits for active readers, and removes the socket file.
+// Close stops accepting new connections, closes active writers immediately, waits for handlers, and removes the socket file.
 func (s *SocketServer) Close() error {
 	s.mu.Lock()
 	if s.closed {
@@ -133,6 +150,9 @@ func (s *SocketServer) Close() error {
 		return nil
 	}
 	s.closed = true
+	for c := range s.conns {
+		_ = c.Close()
+	}
 	s.mu.Unlock()
 
 	err := s.listener.Close()

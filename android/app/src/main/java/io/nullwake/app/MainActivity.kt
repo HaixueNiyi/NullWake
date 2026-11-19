@@ -142,8 +142,8 @@ class MainActivity : ComponentActivity() {
                                     onSelectLanguage = { viewModel.setAppLanguage(it) },
                                     onRenameNode = { id, newName -> viewModel.setCustomNodeName(id, newName) },
                                     onSelectInterval = { viewModel.setPollingInterval(it) },
-                                    onApplyConnectionSettings = { proxy, key ->
-                                        viewModel.applyConnectionSettings(proxy, key)
+                                    onApplyConnectionSettings = { proxy, key, port ->
+                                        viewModel.applyConnectionSettings(proxy, key, port)
                                     },
                                     onOpenAuthUrl = openAuthBrowser,
                                     onResetLogin = { viewModel.resetTailscaleLogin() },

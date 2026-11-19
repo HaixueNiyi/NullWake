@@ -9,8 +9,10 @@ import io.nullwake.app.model.PeerNode
 import io.nullwake.app.model.TelemetryMessage
 import io.nullwake.app.ui.i18n.AppLanguage
 import io.nullwake.app.ui.theme.ThemeMode
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -36,6 +38,7 @@ data class NullWakeUiState(
     val netTxHistory: List<Float> = emptyList(),
     val gpuHistory: List<Float> = emptyList(),
     val intervalMs: Long = 1000L,
+    val agentPort: Int = 9100,
     val proxyUrl: String = "",
     val authKey: String = "",
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
@@ -60,6 +63,7 @@ class NullWakeViewModel(application: Application) : AndroidViewModel(application
         NullWakeUiState(
             customNames = loadCustomNames(),
             intervalMs = prefs.getLong(KEY_INTERVAL_MS, 1000L),
+            agentPort = prefs.getInt(KEY_AGENT_PORT, DEFAULT_AGENT_PORT),
             proxyUrl = prefs.getString(KEY_PROXY_URL, "") ?: "",
             authKey = prefs.getString(KEY_AUTH_KEY, "") ?: "",
             themeMode = ThemeMode.fromKey(prefs.getString(KEY_THEME_MODE, null)),
@@ -72,8 +76,11 @@ class NullWakeViewModel(application: Application) : AndroidViewModel(application
 
     @Volatile
     private var isForeground = false
+    private var bridgeJob: Job? = null
     private var nodePollJob: Job? = null
     private var subscribeJob: Job? = null
+    private var reconnectJob: Job? = null
+    private var reconnectAttempt = 0
 
     init {
         val crashFile = File(application.filesDir, "last_crash.txt")
@@ -88,8 +95,15 @@ class NullWakeViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun startBridge(clearState: Boolean = false) {
+        reconnectJob?.cancel()
+        reconnectJob = null
         subscribeJob?.cancel()
-        viewModelScope.launch(Dispatchers.IO) {
+        subscribeJob = null
+        val prevBridgeJob = bridgeJob
+        prevBridgeJob?.cancel()
+
+        bridgeJob = viewModelScope.launch(Dispatchers.IO) {
+            prevBridgeJob?.join()
             bridge.stop()
             if (clearState) {
                 stateDir.deleteRecursively()
@@ -133,6 +147,9 @@ class NullWakeViewModel(application: Application) : AndroidViewModel(application
                     }
 
                     override fun onTelemetry(message: TelemetryMessage) {
+                        reconnectAttempt = 0
+                        reconnectJob?.cancel()
+                        reconnectJob = null
                         val data = message.data
                         _uiState.update { cur ->
                             cur.copy(
@@ -154,9 +171,20 @@ class NullWakeViewModel(application: Application) : AndroidViewModel(application
                     }
 
                     override fun onError(error: String) {
+                        val isStreamDrop = error.startsWith("stream closed:") || error.startsWith("stream panic:")
                         _uiState.update {
-                            if (it.isConnecting) it
-                            else it.copy(errorMessage = error, isSubscribed = false)
+                            if (it.isConnecting && subscribeJob?.isActive == true) {
+                                it
+                            } else {
+                                it.copy(
+                                    errorMessage = error,
+                                    isSubscribed = false,
+                                    isConnecting = false,
+                                )
+                            }
+                        }
+                        if (isStreamDrop && isForeground) {
+                            scheduleAutoReconnect()
                         }
                     }
                 },
@@ -187,6 +215,8 @@ class NullWakeViewModel(application: Application) : AndroidViewModel(application
         isForeground = false
         nodePollJob?.cancel()
         nodePollJob = null
+        reconnectJob?.cancel()
+        reconnectJob = null
         subscribeJob?.cancel()
         subscribeJob = null
         viewModelScope.launch(Dispatchers.IO) {
@@ -261,18 +291,30 @@ class NullWakeViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun applyConnectionSettings(proxyUrl: String, authKey: String) {
+    fun applyConnectionSettings(proxyUrl: String, authKey: String, agentPortInput: String) {
+        val trimmedProxy = proxyUrl.trim()
+        val trimmedKey = authKey.trim()
+        val parsedPort = agentPortInput.trim().toIntOrNull()?.takeIf { it in 1..65535 } ?: DEFAULT_AGENT_PORT
+        val prev = _uiState.value
+        val needsBridgeRestart = trimmedProxy != prev.proxyUrl || trimmedKey != prev.authKey
+
         prefs.edit()
-            .putString(KEY_PROXY_URL, proxyUrl.trim())
-            .putString(KEY_AUTH_KEY, authKey.trim())
+            .putString(KEY_PROXY_URL, trimmedProxy)
+            .putString(KEY_AUTH_KEY, trimmedKey)
+            .putInt(KEY_AGENT_PORT, parsedPort)
             .apply()
         _uiState.update {
             it.copy(
-                proxyUrl = proxyUrl.trim(),
-                authKey = authKey.trim(),
+                proxyUrl = trimmedProxy,
+                authKey = trimmedKey,
+                agentPort = parsedPort,
             )
         }
-        startBridge(clearState = false)
+        if (needsBridgeRestart) {
+            startBridge(clearState = false)
+        } else if (isForeground && prev.selectedNode != null && prev.tailscaleState == "Running") {
+            subscribeToNode(prev.selectedNode)
+        }
     }
 
     fun resetTailscaleLogin() {
@@ -289,17 +331,21 @@ class NullWakeViewModel(application: Application) : AndroidViewModel(application
 
     private fun subscribeToNode(node: PeerNode) {
         val intervalMs = _uiState.value.intervalMs
+        val port = _uiState.value.agentPort.takeIf { it in 1..65535 } ?: DEFAULT_AGENT_PORT
+        reconnectJob?.cancel()
+        reconnectJob = null
         subscribeJob?.cancel()
         subscribeJob = viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isConnecting = true, errorMessage = null) }
             bridge.unsubscribe()
-            val addr = "${node.ip}:9100"
+            val addr = if (node.ip.contains(":")) "[${node.ip}]:$port" else "${node.ip}:$port"
 
             var lastError: Throwable? = null
             for (attempt in 0..1) {
                 if (!isActive) return@launch
                 val res = bridge.subscribeNode(addr, intervalMs)
                 if (res.isSuccess) {
+                    reconnectAttempt = 0
                     _uiState.update {
                         it.copy(
                             isSubscribed = true,
@@ -323,6 +369,28 @@ class NullWakeViewModel(application: Application) : AndroidViewModel(application
                         errorMessage = lastError?.message ?: "Failed to connect to $addr",
                     )
                 }
+                if (_uiState.value.tailscaleState == "Running") {
+                    scheduleAutoReconnect()
+                }
+            }
+        }
+    }
+
+    private fun scheduleAutoReconnect() {
+        if (reconnectJob?.isActive == true || !isForeground) return
+        val backoffMs = when (reconnectAttempt) {
+            0 -> 1500L
+            1 -> 3000L
+            2 -> 6000L
+            else -> 10000L
+        }
+        reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(4)
+        reconnectJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(backoffMs)
+            val snap = _uiState.value
+            val node = snap.selectedNode
+            if (isActive && isForeground && node != null && snap.tailscaleState == "Running" && !snap.isSubscribed) {
+                subscribeToNode(node)
             }
         }
     }
@@ -389,13 +457,20 @@ class NullWakeViewModel(application: Application) : AndroidViewModel(application
 
     override fun onCleared() {
         super.onCleared()
+        reconnectJob?.cancel()
         subscribeJob?.cancel()
-        bridge.stop()
+        bridgeJob?.cancel()
+        val bridgeRef = bridge
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            bridgeRef.stop()
+        }
     }
 
     private companion object {
         const val MAX_HISTORY_POINTS = 60
+        const val DEFAULT_AGENT_PORT = 9100
         const val KEY_INTERVAL_MS = "interval_ms"
+        const val KEY_AGENT_PORT = "agent_port"
         const val KEY_PROXY_URL = "proxy_url"
         const val KEY_AUTH_KEY = "auth_key"
         const val KEY_LAST_NODE_ID = "last_node_id"

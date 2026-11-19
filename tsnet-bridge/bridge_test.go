@@ -187,7 +187,12 @@ func TestSubscribeNodeAndUnsubscribe(t *testing.T) {
 	addr := strings.TrimPrefix(srv.URL, "http://")
 	listener := &mockBridgeListener{}
 	b := NewBridge()
+	b.allowDirectDial = true
 	b.SetListener(listener)
+
+	if err := NewBridge().SubscribeNode(addr, 500); err == nil {
+		t.Fatalf("expected SubscribeNode on unstarted bridge to fail fast")
+	}
 
 	if err := b.SubscribeNode(addr, 500); err != nil {
 		t.Fatalf("SubscribeNode failed: %v", err)

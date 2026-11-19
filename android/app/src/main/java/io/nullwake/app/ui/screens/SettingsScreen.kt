@@ -58,7 +58,7 @@ fun SettingsScreen(
     onSelectLanguage: (AppLanguage) -> Unit,
     onRenameNode: (nodeId: String, newName: String) -> Unit,
     onSelectInterval: (Long) -> Unit,
-    onApplyConnectionSettings: (proxyUrl: String, authKey: String) -> Unit,
+    onApplyConnectionSettings: (proxyUrl: String, authKey: String, agentPort: String) -> Unit,
     onOpenAuthUrl: (String) -> Unit,
     onResetLogin: () -> Unit,
     modifier: Modifier = Modifier,
@@ -69,6 +69,7 @@ fun SettingsScreen(
 
     var proxyInput by remember(uiState.proxyUrl) { mutableStateOf(uiState.proxyUrl) }
     var authKeyInput by remember(uiState.authKey) { mutableStateOf(uiState.authKey) }
+    var agentPortInput by remember(uiState.agentPort) { mutableStateOf(uiState.agentPort.toString()) }
     var editingNode by remember { mutableStateOf<PeerNode?>(null) }
 
     val intervals = listOf(500L, 1000L, 2000L)
@@ -348,9 +349,29 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
 
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = agentPortInput,
+                        onValueChange = { next ->
+                            if (next.length <= 5 && next.all { it.isDigit() }) {
+                                agentPortInput = next
+                            }
+                        },
+                        label = { Text(strings.agentPortLabel) },
+                        placeholder = { Text("9100") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = strings.agentPortHint,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant,
+                    )
+
                     Spacer(modifier = Modifier.height(14.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(onClick = { onApplyConnectionSettings(proxyInput, authKeyInput) }) {
+                        Button(onClick = { onApplyConnectionSettings(proxyInput, authKeyInput, agentPortInput) }) {
                             Text(strings.applyAndReconnect)
                         }
                         if (uiState.authUrl != null) {

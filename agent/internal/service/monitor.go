@@ -35,6 +35,11 @@ func NewMonitor(configs []config.ServiceConfig, rb *RingBuffer, systemd SystemdQ
 	if rb == nil {
 		rb = NewRingBuffer(200)
 	}
+	reserved := make([]string, 0, len(configs))
+	for _, sc := range configs {
+		reserved = append(reserved, sc.ID)
+	}
+	rb.Reserve(reserved)
 	return &Monitor{
 		configs: configs,
 		rb:      rb,
@@ -46,33 +51,49 @@ func NewMonitor(configs []config.ServiceConfig, rb *RingBuffer, systemd SystemdQ
 	}
 }
 
-// CollectServices queries all configured services and merges any dynamic push-only service IDs.
+// CollectServices queries all configured services concurrently and merges any dynamic push-only service IDs.
 func (m *Monitor) CollectServices(ctx context.Context) []protocol.ServiceStatus {
 	seen := make(map[string]bool, len(m.configs))
-	statuses := make([]protocol.ServiceStatus, 0, len(m.configs))
+	configured := make([]protocol.ServiceStatus, len(m.configs))
 
-	for _, sc := range m.configs {
-		seen[sc.ID] = true
-		var st protocol.ServiceStatus
-		switch sc.Type {
-		case "systemd":
-			st = m.collectSystemd(ctx, sc)
-		case "tcp":
-			st = m.collectTCP(ctx, sc)
-		case "http_json":
-			st = m.collectHTTPJSON(ctx, sc)
-		case "script":
-			st = m.collectScript(ctx, sc)
-		default:
-			st = m.collectPushOnly(sc.ID, sc.Name)
+	if len(m.configs) > 0 {
+		const maxConcurrentProbes = 8
+		sem := make(chan struct{}, maxConcurrentProbes)
+		var wg sync.WaitGroup
+		for i, sc := range m.configs {
+			seen[sc.ID] = true
+			wg.Add(1)
+			go func(idx int, cfg config.ServiceConfig) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				var st protocol.ServiceStatus
+				switch cfg.Type {
+				case "systemd":
+					st = m.collectSystemd(ctx, cfg)
+				case "tcp":
+					st = m.collectTCP(ctx, cfg)
+				case "http_json":
+					st = m.collectHTTPJSON(ctx, cfg)
+				case "script":
+					st = m.collectScript(ctx, cfg)
+				default:
+					st = m.collectPushOnly(cfg.ID, cfg.Name)
+				}
+				m.recordTransition(cfg.ID, st.Status)
+				st.History = m.rb.History(cfg.ID)
+				if st.Metrics == nil {
+					st.Metrics = []protocol.ServiceMetric{}
+				}
+				configured[idx] = st
+			}(i, sc)
 		}
-		m.recordTransition(sc.ID, st.Status)
-		st.History = m.rb.History(sc.ID)
-		if st.Metrics == nil {
-			st.Metrics = []protocol.ServiceMetric{}
-		}
-		statuses = append(statuses, st)
+		wg.Wait()
 	}
+
+	statuses := make([]protocol.ServiceStatus, 0, len(configured)+4)
+	statuses = append(statuses, configured...)
 
 	// Include unconfigured services that pushed events via /run/nullwake.sock.
 	for _, id := range m.rb.ServiceIDs() {

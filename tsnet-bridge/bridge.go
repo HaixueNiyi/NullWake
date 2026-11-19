@@ -81,14 +81,16 @@ func Stop() {
 
 // Bridge manages an embedded userspace tsnet node and WebSocket telemetry stream.
 type Bridge struct {
-	mu            sync.Mutex
-	ts            *tsnet.Server
-	localClient   *local.Client
-	httpTransport *http.Transport
-	httpClient    *http.Client
-	listener      BridgeListener
-	watchCancel   context.CancelFunc
-	watchDone     chan struct{}
+	lifecycleMu     sync.Mutex
+	mu              sync.Mutex
+	ts              *tsnet.Server
+	localClient     *local.Client
+	httpTransport   *http.Transport
+	httpClient      *http.Client
+	listener        BridgeListener
+	watchCancel     context.CancelFunc
+	watchDone       chan struct{}
+	allowDirectDial bool
 
 	subMu     sync.Mutex
 	subConn   *websocket.Conn
@@ -103,6 +105,9 @@ func NewBridge() *Bridge {
 
 // Start configures optional control-plane proxy env vars and boots userspace tsnet without Android VpnService.
 func (b *Bridge) Start(stateDir string, authKey string, proxyURL string, listener BridgeListener) (retErr error) {
+	b.lifecycleMu.Lock()
+	defer b.lifecycleMu.Unlock()
+
 	defer func() {
 		if r := recover(); r != nil {
 			msg := fmt.Sprintf("tsnet start panic: %v\n%s", r, string(debug.Stack()))
@@ -113,7 +118,7 @@ func (b *Bridge) Start(stateDir string, authKey string, proxyURL string, listene
 		}
 	}()
 
-	b.Stop()
+	b.stopLocked()
 
 	if err := applyProxyEnv(proxyURL); err != nil {
 		return err
@@ -272,9 +277,13 @@ func (b *Bridge) SubscribeNode(targetAddr string, intervalMs int64) error {
 	b.mu.Lock()
 	httpClient := b.httpClient
 	listener := b.listener
+	allowDirect := b.allowDirectDial
 	b.mu.Unlock()
 
 	if httpClient == nil {
+		if !allowDirect {
+			return errors.New("tsnet bridge is not started")
+		}
 		dialer := &net.Dialer{Timeout: 12 * time.Second}
 		httpClient = &http.Client{
 			Transport: &http.Transport{
@@ -354,6 +363,12 @@ func (b *Bridge) Unsubscribe() {
 
 // Stop terminates any active subscription and shuts down the embedded tsnet instance.
 func (b *Bridge) Stop() {
+	b.lifecycleMu.Lock()
+	defer b.lifecycleMu.Unlock()
+	b.stopLocked()
+}
+
+func (b *Bridge) stopLocked() {
 	b.Unsubscribe()
 
 	b.mu.Lock()

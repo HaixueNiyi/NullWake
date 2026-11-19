@@ -260,3 +260,48 @@ func TestMonitorHTTPJSONProbe(t *testing.T) {
 		t.Fatalf("expected HTTP 503 service degraded, got %+v", statuses[1])
 	}
 }
+
+func TestRingBufferLRUEvictionAndPinned(t *testing.T) {
+	rb := NewRingBuffer(5)
+	rb.maxServices = 2
+	rb.Reserve([]string{"pinned"})
+
+	rb.Push("pinned", protocol.HistoryEvent{TS: 1, Event: "keep"})
+	rb.Push("dyn-1", protocol.HistoryEvent{TS: 2, Event: "old"})
+	rb.Push("dyn-2", protocol.HistoryEvent{TS: 3, Event: "new"})
+
+	if len(rb.History("pinned")) != 1 {
+		t.Fatalf("expected pinned service retained")
+	}
+	if len(rb.History("dyn-1")) != 0 {
+		t.Fatalf("expected oldest unpinned dynamic service dyn-1 to be evicted")
+	}
+	if len(rb.History("dyn-2")) != 1 {
+		t.Fatalf("expected newest dynamic service dyn-2 retained")
+	}
+}
+
+func TestSocketServerCloseUnblocksIdleWriterImmediately(t *testing.T) {
+	sockPath := filepath.Join(t.TempDir(), "nullwake.sock")
+	srv, err := NewSocketServer(sockPath, 0o666, NewRingBuffer(10))
+	if err != nil {
+		t.Fatalf("start socket server: %v", err)
+	}
+
+	conn, err := net.Dial("unix", sockPath)
+	if err != nil {
+		t.Fatalf("dial unix: %v", err)
+	}
+	defer conn.Close()
+
+	// Give acceptLoop a moment to register the active connection.
+	time.Sleep(30 * time.Millisecond)
+
+	start := time.Now()
+	if err := srv.Close(); err != nil {
+		t.Fatalf("close socket server: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("expected immediate SocketServer.Close(), took %v", elapsed)
+	}
+}

@@ -15,13 +15,16 @@ type RingBuffer struct {
 	mu          sync.RWMutex
 	capacity    int
 	maxServices int
+	seq         uint64
+	pinned      map[string]bool
 	items       map[string]*serviceRing
 }
 
 type serviceRing struct {
-	buf   []protocol.HistoryEvent
-	head  int
-	count int
+	buf       []protocol.HistoryEvent
+	head      int
+	count     int
+	lastTouch uint64
 }
 
 // NewRingBuffer creates a thread-safe RingBuffer with capacity N events per service.
@@ -32,7 +35,19 @@ func NewRingBuffer(capacity int) *RingBuffer {
 	return &RingBuffer{
 		capacity:    capacity,
 		maxServices: defaultMaxServices,
+		pinned:      make(map[string]bool),
 		items:       make(map[string]*serviceRing),
+	}
+}
+
+// Reserve pins configured service IDs so dynamic push bursts do not LRU-evict them.
+func (r *RingBuffer) Reserve(serviceIDs []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, id := range serviceIDs {
+		if id != "" {
+			r.pinned[id] = true
+		}
 	}
 }
 
@@ -48,16 +63,32 @@ func (r *RingBuffer) Push(serviceID string, ev protocol.HistoryEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	r.seq++
 	ring, ok := r.items[serviceID]
 	if !ok {
 		if len(r.items) >= r.maxServices {
-			return
+			var oldestID string
+			var oldestSeq uint64
+			for id, candidate := range r.items {
+				if r.pinned[id] {
+					continue
+				}
+				if oldestID == "" || candidate.lastTouch < oldestSeq {
+					oldestID = id
+					oldestSeq = candidate.lastTouch
+				}
+			}
+			if oldestID == "" {
+				return
+			}
+			delete(r.items, oldestID)
 		}
 		ring = &serviceRing{
 			buf: make([]protocol.HistoryEvent, r.capacity),
 		}
 		r.items[serviceID] = ring
 	}
+	ring.lastTouch = r.seq
 
 	if ring.count < r.capacity {
 		idx := (ring.head + ring.count) % r.capacity

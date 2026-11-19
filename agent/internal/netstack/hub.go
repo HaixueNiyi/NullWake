@@ -35,15 +35,21 @@ type ServiceMonitor interface {
 	Reset()
 }
 
-// Hub manages WebSocket sessions and enforces strict on-demand telemetry collection.
+// Hub manages WebSocket sessions and enforces a single shared on-demand collection loop.
 type Hub struct {
 	collector       HardwareCollector
 	monitor         ServiceMonitor
 	watchdogTimeout time.Duration
 	logger          *log.Logger
 
-	mu          sync.Mutex
-	subscribers int
+	mu             sync.Mutex
+	sessions       map[*wsSession]time.Duration
+	loopRunning    bool
+	loopCancel     context.CancelFunc
+	loopDone       chan struct{}
+	intervalNotify chan struct{}
+	warmedUp       bool
+	lastPayload    []byte
 }
 
 // NewHub constructs a Hub with a 5-second ping watchdog timeout.
@@ -56,6 +62,8 @@ func NewHub(c HardwareCollector, m ServiceMonitor, logger *log.Logger) *Hub {
 		monitor:         m,
 		watchdogTimeout: defaultWatchdogPeriod,
 		logger:          logger,
+		sessions:        make(map[*wsSession]time.Duration),
+		intervalNotify:  make(chan struct{}, 1),
 	}
 }
 
@@ -72,7 +80,7 @@ func (h *Hub) SetWatchdogTimeout(d time.Duration) {
 func (h *Hub) ActiveSubscribers() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.subscribers
+	return len(h.sessions)
 }
 
 // Handler returns an http.Handler routing /ws to the WebSocket session handler.
@@ -83,9 +91,10 @@ func (h *Hub) Handler() http.Handler {
 }
 
 // ServeWS upgrades an incoming HTTP request to a NullWake WebSocket session.
+// Requests without an Origin header (native Go/Android clients) and localhost origins are permitted.
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true,
+		OriginPatterns: []string{"localhost:*", "127.0.0.1:*", "[::1]:*"},
 	})
 	if err != nil {
 		h.logger.Printf("websocket accept error: %v", err)
@@ -129,20 +138,58 @@ func (h *Hub) handleSession(parentCtx context.Context, conn *websocket.Conn) {
 	}
 }
 
-func (h *Hub) acquireSubscriber() {
+func (h *Hub) acquireSession(s *wsSession, interval time.Duration) time.Duration {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.subscribers++
+	h.sessions[s] = interval
+	watchdogTimeout := h.watchdogTimeout
+	if h.warmedUp && len(h.lastPayload) > 0 {
+		s.enqueue(h.lastPayload)
+	}
+	if !h.loopRunning {
+		loopCtx, loopCancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		h.loopRunning = true
+		h.loopCancel = loopCancel
+		h.loopDone = done
+		go h.runCollectorLoop(loopCtx, done, watchdogTimeout)
+	} else {
+		select {
+		case h.intervalNotify <- struct{}{}:
+		default:
+		}
+	}
+	h.mu.Unlock()
+	return watchdogTimeout
 }
 
-func (h *Hub) releaseSubscriber() {
+func (h *Hub) releaseSession(s *wsSession) {
 	h.mu.Lock()
-	if h.subscribers > 0 {
-		h.subscribers--
+	delete(h.sessions, s)
+	remaining := len(h.sessions)
+	var cancel context.CancelFunc
+	var done chan struct{}
+	if remaining == 0 && h.loopRunning {
+		cancel = h.loopCancel
+		done = h.loopDone
+		h.loopRunning = false
+		h.loopCancel = nil
+		h.loopDone = nil
+		h.warmedUp = false
+		h.lastPayload = nil
+	} else if remaining > 0 {
+		select {
+		case h.intervalNotify <- struct{}{}:
+		default:
+		}
 	}
-	remaining := h.subscribers
 	h.mu.Unlock()
 
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
 	if remaining == 0 {
 		if h.collector != nil {
 			h.collector.Reset()
@@ -150,6 +197,87 @@ func (h *Hub) releaseSubscriber() {
 		if h.monitor != nil {
 			h.monitor.Reset()
 		}
+	}
+}
+
+func (h *Hub) minInterval() time.Duration {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	min := time.Duration(defaultIntervalMs) * time.Millisecond
+	first := true
+	for _, iv := range h.sessions {
+		if first || iv < min {
+			min = iv
+			first = false
+		}
+	}
+	return min
+}
+
+func (h *Hub) runCollectorLoop(ctx context.Context, done chan struct{}, watchdogTimeout time.Duration) {
+	defer close(done)
+
+	// Warm up delta baselines (CPU, Net, Intel RC6) once across all subscribers.
+	if h.collector != nil {
+		warmup := 150 * time.Millisecond
+		if capWarmup := watchdogTimeout / 3; capWarmup < warmup {
+			warmup = capWarmup
+		}
+		_, _ = h.collector.Collect(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(warmup):
+		}
+		h.mu.Lock()
+		for s := range h.sessions {
+			s.touchPing()
+		}
+		h.warmedUp = true
+		h.mu.Unlock()
+	}
+
+	h.collectAndBroadcast(ctx)
+
+	curInterval := h.minInterval()
+	ticker := time.NewTicker(curInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-h.intervalNotify:
+			next := h.minInterval()
+			if next != curInterval {
+				curInterval = next
+				ticker.Reset(curInterval)
+			}
+		case <-ticker.C:
+			h.collectAndBroadcast(ctx)
+		}
+	}
+}
+
+func (h *Hub) collectAndBroadcast(ctx context.Context) {
+	payload, err := h.collectPayload(ctx)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			h.logger.Printf("telemetry collect error: %v", err)
+		}
+		return
+	}
+
+	h.mu.Lock()
+	h.lastPayload = payload
+	targets := make([]*wsSession, 0, len(h.sessions))
+	for s := range h.sessions {
+		targets = append(targets, s)
+	}
+	h.mu.Unlock()
+
+	for _, s := range targets {
+		s.enqueue(payload)
 	}
 }
 
@@ -188,11 +316,35 @@ type wsSession struct {
 	subscribed bool
 	subCancel  context.CancelFunc
 	subDone    chan struct{}
+	sendCh     chan []byte
 	lastPingNs atomic.Int64
 }
 
 func (s *wsSession) touchPing() {
 	s.lastPingNs.Store(time.Now().UnixNano())
+}
+
+func (s *wsSession) enqueue(payload []byte) {
+	s.subMu.Lock()
+	ch := s.sendCh
+	subscribed := s.subscribed
+	s.subMu.Unlock()
+	if !subscribed || ch == nil {
+		return
+	}
+	// Non-blocking send; drop stale buffered frame if client is lagging.
+	select {
+	case ch <- payload:
+	default:
+		select {
+		case <-ch:
+		default:
+		}
+		select {
+		case ch <- payload:
+		default:
+		}
+	}
 }
 
 func (s *wsSession) startSubscription(sessionCtx context.Context, closeSession context.CancelFunc, interval time.Duration) {
@@ -202,19 +354,17 @@ func (s *wsSession) startSubscription(sessionCtx context.Context, closeSession c
 	s.subMu.Lock()
 	subCtx, subCancel := context.WithCancel(sessionCtx)
 	done := make(chan struct{})
+	sendCh := make(chan []byte, 2)
 	s.subscribed = true
 	s.subCancel = subCancel
 	s.subDone = done
+	s.sendCh = sendCh
 	s.touchPing()
 	s.subMu.Unlock()
 
-	s.hub.acquireSubscriber()
+	watchdogTimeout := s.hub.acquireSession(s, interval)
 
-	s.hub.mu.Lock()
-	watchdogTimeout := s.hub.watchdogTimeout
-	s.hub.mu.Unlock()
-
-	go s.runLoop(subCtx, closeSession, done, interval, watchdogTimeout)
+	go s.runLoop(subCtx, closeSession, done, sendCh, watchdogTimeout)
 }
 
 func (s *wsSession) stopSubscription() {
@@ -228,6 +378,7 @@ func (s *wsSession) stopSubscription() {
 	done := s.subDone
 	s.subCancel = nil
 	s.subDone = nil
+	s.sendCh = nil
 	s.subMu.Unlock()
 
 	if cancel != nil {
@@ -236,41 +387,17 @@ func (s *wsSession) stopSubscription() {
 	if done != nil {
 		<-done
 	}
-	s.hub.releaseSubscriber()
+	s.hub.releaseSession(s)
 }
 
 func (s *wsSession) runLoop(
 	ctx context.Context,
 	closeSession context.CancelFunc,
 	done chan struct{},
-	interval time.Duration,
+	sendCh <-chan []byte,
 	watchdogTimeout time.Duration,
 ) {
 	defer close(done)
-
-	// Warm up delta baselines (CPU, Net, Intel RC6) briefly so the initial frame is accurate.
-	if s.hub.collector != nil {
-		warmup := 150 * time.Millisecond
-		if capWarmup := watchdogTimeout / 3; capWarmup < warmup {
-			warmup = capWarmup
-		}
-		_, _ = s.hub.collector.Collect(ctx)
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(warmup):
-		}
-		s.touchPing()
-	}
-
-	// Send initial telemetry + ring-buffer history immediately upon SUBSCRIBE.
-	if err := s.sendTelemetry(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		closeSession()
-		return
-	}
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 
 	watchdogPeriod := watchdogTimeout / 4
 	if watchdogPeriod > 500*time.Millisecond {
@@ -294,8 +421,13 @@ func (s *wsSession) runLoop(
 				closeSession()
 				return
 			}
-		case <-ticker.C:
-			if err := s.sendTelemetry(ctx); err != nil {
+		case payload := <-sendCh:
+			s.writeMu.Lock()
+			writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			err := s.conn.Write(writeCtx, websocket.MessageText, payload)
+			cancel()
+			s.writeMu.Unlock()
+			if err != nil {
 				if !errors.Is(err, context.Canceled) {
 					closeSession()
 				}
@@ -303,20 +435,6 @@ func (s *wsSession) runLoop(
 			}
 		}
 	}
-}
-
-func (s *wsSession) sendTelemetry(ctx context.Context) error {
-	payload, err := s.hub.collectPayload(ctx)
-	if err != nil {
-		return err
-	}
-
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-
-	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	return s.conn.Write(writeCtx, websocket.MessageText, payload)
 }
 
 func clampInterval(ms int) time.Duration {

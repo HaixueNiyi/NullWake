@@ -3,6 +3,7 @@ package netstack
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
@@ -153,5 +154,67 @@ func TestHubSubscribePingUnsubscribeAndWatchdog(t *testing.T) {
 	}
 	if hub.ActiveSubscribers() != 0 {
 		t.Fatalf("expected 0 subscribers after watchdog disconnect, got %d", hub.ActiveSubscribers())
+	}
+}
+
+func TestHubSharedLoopAndOriginCheck(t *testing.T) {
+	fc := &fakeCollector{}
+	fm := &fakeMonitor{}
+	hub := NewHub(fc, fm, nil)
+	hub.SetWatchdogTimeout(2 * time.Second)
+
+	srv := httptest.NewServer(hub.Handler())
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Cross-origin browser request must be rejected.
+	_, resp, err := websocket.Dial(ctx, wsURL(srv.URL), &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": []string{"https://evil.example.com"}},
+	})
+	if err == nil {
+		t.Fatalf("expected cross-origin WebSocket dial to be rejected")
+	}
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+
+	c1, _, err := websocket.Dial(ctx, wsURL(srv.URL), nil)
+	if err != nil {
+		t.Fatalf("dial c1: %v", err)
+	}
+	defer c1.CloseNow()
+
+	c2, _, err := websocket.Dial(ctx, wsURL(srv.URL), nil)
+	if err != nil {
+		t.Fatalf("dial c2: %v", err)
+	}
+	defer c2.CloseNow()
+
+	subMsg, _ := json.Marshal(protocol.ClientMessage{Type: protocol.MsgSubscribe, IntervalMs: 200})
+	if err := c1.Write(ctx, websocket.MessageText, subMsg); err != nil {
+		t.Fatalf("c1 subscribe: %v", err)
+	}
+	if _, _, err := c1.Read(ctx); err != nil {
+		t.Fatalf("c1 initial read: %v", err)
+	}
+
+	if err := c2.Write(ctx, websocket.MessageText, subMsg); err != nil {
+		t.Fatalf("c2 subscribe: %v", err)
+	}
+	if _, _, err := c2.Read(ctx); err != nil {
+		t.Fatalf("c2 initial read: %v", err)
+	}
+
+	if hub.ActiveSubscribers() != 2 {
+		t.Fatalf("expected 2 active subscribers, got %d", hub.ActiveSubscribers())
+	}
+
+	// Over ~450ms at 200ms interval, shared loop should collect ~3-4 times total (not 6-8x).
+	time.Sleep(450 * time.Millisecond)
+	calls := fc.collectCalls.Load()
+	if calls > 6 {
+		t.Fatalf("expected shared collector loop (<=6 calls across 2 subscribers), got %d", calls)
 	}
 }
